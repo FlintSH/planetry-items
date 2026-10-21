@@ -18,6 +18,9 @@ AuraSkills2.4.0, Nexo's items/glyphs and Inventory Sync readiness.
 Unit tests validate complete catalogs, duplicate/invalid keys, blank and absent
 values, numeric bounds, slots, model/texture exclusivity, immutable definitions,
 lore ordering/spacing, requirement visibility, formatting, glyph fallback,
+native glyph option forwarding, fonts, shift tags, current/global and older
+player-aware resolver APIs, disabled/incompatible/throwing Nexo hooks, literal
+dynamic values and nonrecursive fallback text,
 low-durability colouring and optional integration failure/cleanup. Recursive folder
 ordering, cross-file duplicate rejection, invalid nested definitions, safe one-time
 legacy import, empty directories, symbolic links, rarity name coloring and clean
@@ -32,6 +35,10 @@ public migration/cooldown, readiness-delayed join migration, definition removal 
 rarity/unbreakable output. Stateful shulker/bundle/book/stored-enchantment data,
 partial-stack merge quantity conservation, safe failed splits, stale-attribute cursor
 repair, quick same-UUID reconnects and delayed Nexo recovery have focused probes.
+Glyph probes cover configured display names/lore and language messages, bitmap/
+colorable/shadow arguments, shifts, font preservation through real item serialization,
+MiniMessage target/identity forwarding, per-recipient permission isolation,
+unavailable/empty/throwing glyph fallbacks and literal values.
 The join/quit sequence models a backend switch; it is not
 a connected-client transfer. They use
 controlled Player implementations and Bukkit event dispatch. The command tests

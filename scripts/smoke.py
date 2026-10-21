@@ -100,6 +100,12 @@ def test_items():
     rarity: COMMON
     max-stack-size: 1
     max-durability: 0
+  glyph_probe:
+    material: PAPER
+    display-name: '<glyph:probe_heart:c> Probe'
+    lore: ['<glyph:probe_heart:2..3:colorable:shadow:#80ffffff><shift:-8>', '<glyph:probe_missing>', '<glyph:probe_empty>', '<glyph:probe_broken>']
+    rarity: RARE
+    max-durability: 0
   stacked_sword:
     material: DIAMOND_SWORD
     type: WEAPON
@@ -375,6 +381,10 @@ def main():
         # this separate nested file without replacing the imported legacy catalog.
         (work / "plugins/PlanetryItems/nested-fixture.yml").write_text(nested_items(), encoding="utf-8")
         (work / "plugins/PlanetryItems/config.yml").write_text("refresh-interval-ticks: 2\n", encoding="utf-8")
+        (work / "plugins/PlanetryItems/lang.yml").write_text(
+            "glyph-fallbacks:\n  probe_heart: '[HEART]'\n  probe_missing: '[MISSING]'\n"
+            "  probe_empty: '[EMPTY]'\n  probe_broken: '[BROKEN]'\n"
+            "messages:\n  glyph-probe: '<glyph:probe_heart><shift:8> {value}'\n", encoding="utf-8")
         (work / "paper.jar").write_bytes(paper)
         (work / "eula.txt").write_text("eula=true\n", encoding="utf-8")
         (work / "server.properties").write_text(

@@ -66,6 +66,7 @@ public final class ItemsProbe extends JavaPlugin {
             glidingDurability();
             equipment();
             commands();
+            glyphTemplates();
             if (integrations) integrationChecks();
             else missingHooks();
             stage = "trident carry after the native post-event overwrite";
@@ -1030,6 +1031,48 @@ public final class ItemsProbe extends JavaPlugin {
         Bukkit.shutdown();
     }
 
+    private void glyphTemplates() throws Exception {
+        stage = "native glyph arguments/fonts, viewer, language templates and safe fallback";
+        ItemStack stack = create("glyph_probe");
+        String glyph = integrations ? "GLYPH[probe_heart:c]" : "[HEART]";
+        check(plain(stack.getItemMeta().displayName()).equals(glyph + " Probe"), "Configured name glyph did not resolve");
+        var lines = lore(stack);
+        check(contains(lines, integrations ? "GLYPH[probe_heart:2..3:colorable:shadow:#80ffffff]SHIFT[-8]" : "[HEART]"),
+                "Native glyph options or shift arguments were lost: " + lines);
+        for (String fallback : List.of("[MISSING]", "[EMPTY]", "[BROKEN]"))
+            check(contains(lines, fallback), "Missing/empty/broken glyph omitted fallback: " + lines);
+        if (integrations) {
+            check(glyphFont(stack.getItemMeta().displayName()), "Native font lost from display name");
+            check(stack.getItemMeta().lore().stream().anyMatch(ItemsProbe::glyphFont), "Native font lost from lore");
+            Class<?> type = Class.forName("com.nexomc.nexo.glyphs.GlyphTag", true,
+                    Bukkit.getPluginManager().getPlugin("Nexo").getClass().getClassLoader());
+            check(player.id.equals(type.getField("lastViewer").get(null)), "Nexo did not receive the actual item viewer");
+        }
+        check(ItemStack.deserializeBytes(stack.serializeAsBytes()).equals(stack), "Serialized glyph components changed");
+        player.messages.clear();
+        call(plugin, "message", player.player, "messages.glyph-probe", Map.of("value", "<glyph:unsafe><shift:99><red>literal"));
+        String prefix = integrations ? "GLYPH[probe_heart]SHIFT[8]" : "[HEART]";
+        check(contains(player.messages, prefix + " <glyph:unsafe><shift:99><red>literal"),
+                "Language glyph failed or dynamic text expanded: " + player.messages);
+        if (integrations) {
+            var denied = new Fake("GlyphDenied", false);
+            denied.glyphAllowed = false;
+            call(plugin, "message", denied.player, "messages.glyph-probe", Map.of("value", "denied"));
+            check(contains(denied.messages, "<glyph:probe_heart><shift:8> denied")
+                    && !contains(denied.messages, "GLYPH[") && !contains(denied.messages, "SHIFT["),
+                    "Current native resolver bypassed recipient permissions: " + denied.messages);
+            call(plugin, "message", player.player, "messages.glyph-probe", Map.of("value", "allowed"));
+            check(contains(player.messages, "GLYPH[probe_heart]SHIFT[8] allowed"),
+                    "One recipient's denied tags leaked into another recipient's message");
+        }
+        passed();
+    }
+
+    private static boolean glyphFont(Component value) {
+        return value.font() != null && value.font().asString().equals("nexo:probe_glyph")
+                || value.children().stream().anyMatch(ItemsProbe::glyphFont);
+    }
+
     private void integrationChecks() throws Exception {
         stage = "Nexo items and glyphs";
         ItemStack nexo = create("nexo");
@@ -1172,7 +1215,7 @@ public final class ItemsProbe extends JavaPlugin {
         final ItemStack[] items = new ItemStack[43]; final List<String> messages = new ArrayList<>();
         final PersistentDataContainer data = new ItemStack(Material.PAPER).getItemMeta().getPersistentDataContainer();
         Player player; PlayerInventory inventory; InventoryView view; Inventory top;
-        ItemStack cursor; boolean admin, legacyAdmin, blocking, gliding; int breaks, sounds;
+        ItemStack cursor; boolean admin, legacyAdmin, blocking, gliding; boolean glyphAllowed = true; int breaks, sounds;
         Fake(String name, boolean admin) {
             this(UUID.randomUUID(), name, admin);
         }
@@ -1208,7 +1251,11 @@ public final class ItemsProbe extends JavaPlugin {
                 case "getServer" -> Bukkit.getServer(); case "getPlayer" -> object;
                 case "isOnline", "isValid", "hasPlayedBefore", "isConnected" -> true;
                 case "isDead", "isSneaking", "isOp" -> false;
-                case "hasPermission", "isPermissionSet" -> permission(args[0]);
+                case "hasPermission", "isPermissionSet" -> args[0].equals("nexo.glyph.probe") || args[0].equals("nexo.shift")
+                        ? glyphAllowed : permission(args[0]);
+                case "get" -> args[0].equals(net.kyori.adventure.identity.Identity.UUID) ? Optional.of(id) : Optional.empty();
+                case "pointers" -> net.kyori.adventure.pointer.Pointers.builder()
+                        .withStatic(net.kyori.adventure.identity.Identity.UUID, id).build();
                 case "getPersistentDataContainer" -> data;
                 case "isBlocking" -> blocking;
                 case "isGliding" -> gliding;

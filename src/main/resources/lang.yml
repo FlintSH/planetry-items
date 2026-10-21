@@ -1,5 +1,7 @@
 # MiniMessage formatting. Dynamic {values} are always inserted as literal text.
-# <glyph:ID> resolves an optional Nexo glyph; glyph-fallbacks are used without it.
+# <glyph:ID> uses Nexo fonts and native options (bitmap, colorable, shadow).
+# <shift:-8> uses Nexo spacing. Missing glyphs use glyph-fallbacks; no fallback means empty.
+# Applies in item names/lore and every language template; dynamic {values} stay literal.
 # Item types, every attribute prefix, requirement, rarity and message are editable.
 schema-version: 1
 

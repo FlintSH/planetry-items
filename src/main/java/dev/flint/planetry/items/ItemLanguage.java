@@ -1,6 +1,7 @@
 package dev.flint.planetry.items;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.pointer.Pointered;
 import net.kyori.adventure.text.TranslatableComponent;
 import net.kyori.adventure.text.TranslationArgument;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -8,6 +9,7 @@ import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.Tag;
+import net.kyori.adventure.text.minimessage.tag.Inserting;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 
@@ -62,7 +64,7 @@ public final class ItemLanguage {
         var language = new ItemLanguage(templates);
         for (var entry : templates.entrySet()) {
             try {
-                language.render(entry.getValue(), Map.of(), Component::text);
+                language.render(entry.getValue(), Map.of(), null);
             } catch (RuntimeException error) {
                 throw new IllegalArgumentException("lang.yml." + entry.getKey() + ": invalid message template", error);
             }
@@ -77,8 +79,38 @@ public final class ItemLanguage {
         }
     }
 
+    // Retain the original simple-glyph API for addons; native callers also provide a MiniMessage target.
+    public Component render(String template, Map<String, String> values, Function<String, Component> glyph) {
+        return render(template, values, legacyGlyphs(glyph), null);
+    }
+    public Component text(String key, Map<String, String> values, Function<String, Component> glyph) {
+        return text(key, values, legacyGlyphs(glyph), null);
+    }
+    public Component displayName(ItemDefinition definition, Function<String, Component> glyph) {
+        return displayName(definition, legacyGlyphs(glyph), null);
+    }
+    public String requirementLabel(String key, int value, Function<String, Component> glyph) {
+        return requirementLabel(key, value, legacyGlyphs(glyph), null);
+    }
+    public String requirementSummary(ItemDefinition definition, Set<String> unmet, Function<String, Component> glyph) {
+        return requirementSummary(definition, unmet, legacyGlyphs(glyph), null);
+    }
+    public List<Component> lore(ItemDefinition definition, int current, Set<String> unmet, Function<String, Component> glyph) {
+        return lore(definition, current, unmet, legacyGlyphs(glyph), null);
+    }
+
+    private static TagResolver legacyGlyphs(Function<String, Component> glyph) {
+        if (glyph == null) return TagResolver.empty();
+        return TagResolver.resolver("glyph", (args, context) -> {
+            String id = args.popOr("A glyph ID is required").value();
+            while (args.hasNext()) args.pop();
+            Component value = glyph.apply(id);
+            return value == null ? null : Tag.inserting(value);
+        });
+    }
+
     /** Replacements are inserted as components, so player names cannot introduce formatting. */
-    public Component render(String template, Map<String, String> values, Function<String, Component> glyphResolver) {
+    public Component render(String template, Map<String, String> values, TagResolver glyphResolver, Pointered target) {
         validateGlyphTags(template);
         var resolver = TagResolver.builder();
         var prepared = new StringBuilder();
@@ -93,15 +125,24 @@ public final class ItemLanguage {
         }
         matcher.appendTail(prepared);
         resolver.resolver(TagResolver.resolver("glyph", (args, context) -> {
-            String id = args.popOr("A glyph ID is required").value();
-            Component glyph = glyphResolver == null ? null : glyphResolver.apply(id);
-            if (glyph == null || glyph.equals(Component.empty())) {
-                String fallback = templates.get("glyph-fallbacks." + id);
-                glyph = fallback == null ? Component.empty() : MINI_MESSAGE.deserialize(fallback);
-            }
-            return Tag.inserting(glyph);
+            if (!args.hasNext()) throw context.newException("A glyph ID is required");
+            String id = args.peek().value();
+            Tag nativeTag = glyphResolver == null ? null : glyphResolver.resolve("glyph", args, context);
+            if (nativeTag != null && !(nativeTag instanceof Inserting inserting
+                    && inserting.value().equals(Component.empty()))) return nativeTag;
+            while (args.hasNext()) args.pop();
+            String fallback = templates.get("glyph-fallbacks." + id);
+            return Tag.inserting(fallback == null ? Component.empty() : MINI_MESSAGE.deserialize(fallback));
         }));
-        return MINI_MESSAGE.deserialize(prepared.toString(), resolver.build()).decorationIfAbsent(TextDecoration.ITALIC, TextDecoration.State.FALSE);
+        resolver.resolver(TagResolver.resolver("shift", (args, context) -> {
+            Tag nativeTag = glyphResolver == null ? null : glyphResolver.resolve("shift", args, context);
+            if (nativeTag != null) return nativeTag;
+            while (args.hasNext()) args.pop();
+            return Tag.inserting(Component.empty());
+        }));
+        Component rendered = target == null ? MINI_MESSAGE.deserialize(prepared.toString(), resolver.build())
+                : MINI_MESSAGE.deserialize(prepared.toString(), target, resolver.build());
+        return rendered.decorationIfAbsent(TextDecoration.ITALIC, TextDecoration.State.FALSE);
     }
 
     private static void validateGlyphTags(String template) {
@@ -114,7 +155,7 @@ public final class ItemLanguage {
             if (!glyph.group().endsWith(">") || !argument.startsWith(":")) {
                 throw new IllegalArgumentException("Glyph tags require one valid glyph ID");
             }
-            String id = argument.substring(1);
+            String id = argument.substring(1).split(":", 2)[0];
             if (id.length() >= 2 && (id.charAt(0) == '\'' || id.charAt(0) == '"')
                     && id.charAt(id.length() - 1) == id.charAt(0)) id = id.substring(1, id.length() - 1);
             if (!id.matches("[A-Za-z0-9_.-]{1,128}")) {
@@ -123,12 +164,12 @@ public final class ItemLanguage {
         }
     }
 
-    public Component text(String key, Map<String, String> values, Function<String, Component> glyphResolver) {
-        return render(templates.getOrDefault(key, key), values, glyphResolver);
+    public Component text(String key, Map<String, String> values, TagResolver glyphResolver, Pointered target) {
+        return render(templates.getOrDefault(key, key), values, glyphResolver, target);
     }
 
     /** Rarity owns the complete visible name color, including explicitly colored nested text and glyphs. */
-    public Component displayName(ItemDefinition definition, Function<String, Component> glyphResolver) {
+    public Component displayName(ItemDefinition definition, TagResolver glyphResolver, Pointered target) {
         TextColor color = switch (definition.rarity().toUpperCase(Locale.ROOT)) {
             case "UNCOMMON" -> NamedTextColor.GREEN;
             case "RARE" -> NamedTextColor.AQUA;
@@ -137,7 +178,7 @@ public final class ItemLanguage {
             case "MYTHICAL" -> NamedTextColor.RED;
             default -> NamedTextColor.GRAY;
         };
-        return colorName(render(definition.displayName(), Map.of(), glyphResolver), color);
+        return colorName(render(definition.displayName(), Map.of(), glyphResolver, target), color);
     }
 
     private static Component colorName(Component component, TextColor color) {
@@ -150,27 +191,27 @@ public final class ItemLanguage {
     }
 
     /** A plain requirement label for command output, independent of decorated requirement lore. */
-    public String requirementLabel(String key, int value, Function<String, Component> glyphResolver) {
+    public String requirementLabel(String key, int value, TagResolver glyphResolver, Pointered target) {
         String fallback = templates.getOrDefault("requirement-labels.default", "{requirement} Level {value}");
         String template = templates.getOrDefault("requirement-labels." + key, fallback);
-        return PLAIN.serialize(render(template, Map.of("value", Integer.toString(value), "requirement", humanize(key)), glyphResolver));
+        return PLAIN.serialize(render(template, Map.of("value", Integer.toString(value), "requirement", humanize(key)), glyphResolver, target));
     }
 
     /** Unmet requirements retain catalog order and never inherit decorative lore prefixes. */
     public String requirementSummary(ItemDefinition definition, Set<String> unmetRequirements,
-                                     Function<String, Component> glyphResolver) {
+                                     TagResolver glyphResolver, Pointered target) {
         var labels = new ArrayList<String>();
         definition.requirements().forEach((key, value) -> {
-            if (unmetRequirements.contains(key)) labels.add(requirementLabel(key, value, glyphResolver));
+            if (unmetRequirements.contains(key)) labels.add(requirementLabel(key, value, glyphResolver, target));
         });
         return String.join(", ", labels);
     }
 
     public List<Component> lore(ItemDefinition definition, int current, Set<String> unmetRequirements,
-                                Function<String, Component> glyphResolver) {
+                                TagResolver glyphResolver, Pointered target) {
         var result = new ArrayList<Component>();
         String typeKey = "types." + definition.type().toLowerCase(Locale.ROOT);
-        result.add(render(templates.getOrDefault(typeKey, "<gray>" + smallCaps(definition.type())), Map.of(), glyphResolver));
+        result.add(render(templates.getOrDefault(typeKey, "<gray>" + smallCaps(definition.type())), Map.of(), glyphResolver, target));
 
         var flavor = new ArrayList<Component>();
         List<String> flavorLines = definition.lore();
@@ -178,16 +219,16 @@ public final class ItemLanguage {
         int end = flavorLines.size();
         while (start < end && flavorLines.get(start).isBlank()) start++;
         while (end > start && flavorLines.get(end - 1).isBlank()) end--;
-        for (int i = start; i < end; i++) flavor.add(render(flavorLines.get(i), Map.of(), glyphResolver));
+        for (int i = start; i < end; i++) flavor.add(render(flavorLines.get(i), Map.of(), glyphResolver, target));
         section(result, flavor);
 
         var attributes = new ArrayList<Component>();
         definition.attributes().forEach((key, attribute) -> {
             boolean percent = !attribute.operation().equals("ADD_NUMBER");
             String unit = percent ? "%" : "";
-            attributes.add(attribute(key.replace(':', '-').replace('_', '-'), key, attribute.amount(), unit, glyphResolver));
+            attributes.add(attribute(key.replace(':', '-').replace('_', '-'), key, attribute.amount(), unit, glyphResolver, target));
         });
-        definition.bonuses().forEach((key, amount) -> attributes.add(attribute(key, key, amount, "", glyphResolver)));
+        definition.bonuses().forEach((key, amount) -> attributes.add(attribute(key, key, amount, "", glyphResolver, target)));
         section(result, attributes);
 
         var requirements = new ArrayList<Component>();
@@ -195,24 +236,24 @@ public final class ItemLanguage {
             if (unmetRequirements.contains(key)) {
                 String fallback = templates.getOrDefault("requirements.default", "<yellow>Requires {requirement} Level {value}");
                 String template = templates.getOrDefault("requirements." + key, fallback);
-                requirements.add(render(template, Map.of("value", Integer.toString(value), "requirement", humanize(key)), glyphResolver));
+                requirements.add(render(template, Map.of("value", Integer.toString(value), "requirement", humanize(key)), glyphResolver, target));
             }
         });
         section(result, requirements);
-        section(result, List.of(text("rarities." + definition.rarity().toLowerCase(Locale.ROOT), Map.of(), glyphResolver)));
+        section(result, List.of(text("rarities." + definition.rarity().toLowerCase(Locale.ROOT), Map.of(), glyphResolver, target)));
 
         if (!definition.unbreakable() && definition.maxDurability() > 0) {
             int remaining = Math.max(0, Math.min(current, definition.maxDurability()));
             String key = remaining <= Math.max(1, definition.maxDurability() / 10.0) ? "lore.durability-low" : "lore.durability";
-            result.add(text(key, Map.of("current", Integer.toString(remaining), "max", Integer.toString(definition.maxDurability())), glyphResolver));
+            result.add(text(key, Map.of("current", Integer.toString(remaining), "max", Integer.toString(definition.maxDurability())), glyphResolver, target));
         }
         return List.copyOf(result);
     }
 
-    private Component attribute(String languageKey, String name, double amount, String unit, Function<String, Component> glyphResolver) {
+    private Component attribute(String languageKey, String name, double amount, String unit, TagResolver glyphResolver, Pointered target) {
         String template = templates.getOrDefault("attributes." + languageKey,
                 templates.getOrDefault("attributes.default", "<gray>{attribute}: <white>{value}{unit}"));
-        return render(template, Map.of("attribute", humanize(name), "value", signed(amount, unit.equals("%")), "unit", unit), glyphResolver);
+        return render(template, Map.of("attribute", humanize(name), "value", signed(amount, unit.equals("%")), "unit", unit), glyphResolver, target);
     }
 
     private static String signed(double amount, boolean percentage) {

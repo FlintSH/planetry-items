@@ -111,8 +111,8 @@ public final class ItemService {
         if (def == null) return;
         var meta = stack.getItemMeta();
         Set<String> unmet = unmet(viewer, def);
-        meta.displayName(plugin.language().displayName(def, plugin.hooks()::glyph));
-        meta.lore(plugin.language().lore(def, currentDurability(stack), unmet, plugin.hooks()::glyph));
+        meta.displayName(plugin.language().displayName(def, plugin.hooks().glyphs(viewer), viewer));
+        meta.lore(plugin.language().lore(def, currentDurability(stack), unmet, plugin.hooks().glyphs(viewer), viewer));
         // A deferred migration must not make an existing oversized stack invalid.
         if (stack.getAmount() <= def.maxStackSize()) meta.setMaxStackSize(def.maxStackSize());
         // Custom durability is event-driven for every material. Suppress vanilla damage and tooltips.

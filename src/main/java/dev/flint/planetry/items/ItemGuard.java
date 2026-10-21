@@ -47,7 +47,7 @@ public final class ItemGuard implements Listener {
             Set<String> unmet = def == null ? Set.of() : items().unmet(player, def);
             if (!unmet.isEmpty()) {
                 plugin.message(player, "messages.requirements-not-met", Map.of("requirements",
-                        plugin.language().requirementSummary(def, unmet, plugin.hooks()::glyph), "item", def.id()));
+                        plugin.language().requirementSummary(def, unmet, plugin.hooks().glyphs(player), player), "item", def.id()));
             } else plugin.message(player, !plugin.hooks().inventoryReady(player)
                     ? "messages.integration-unavailable" : "messages.disabled-item", Map.of());
             lastMessage.put(player.getUniqueId(), now);

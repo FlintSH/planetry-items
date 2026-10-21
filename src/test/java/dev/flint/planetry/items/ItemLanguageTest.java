@@ -8,6 +8,9 @@ import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.junit.jupiter.api.Test;
+import net.kyori.adventure.text.minimessage.tag.Tag;
+import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import java.util.function.Function;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -95,8 +98,8 @@ class ItemLanguageTest {
     @Test void resolvesGlyphsAndFallsBackWhenNexoIsAbsent() throws Exception {
         var lang = language("glyph-fallbacks:\n  tag_common: '<gold>Common fallback'\n");
         assertEquals("Common fallback", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), null)));
-        assertEquals("Common fallback", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), ignored -> Component.empty())));
-        assertEquals("NEXO", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), ignored -> Component.text("NEXO"))));
+        assertEquals("Common fallback", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), glyphs(ignored -> Component.empty()))));
+        assertEquals("NEXO", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), glyphs(ignored -> Component.text("NEXO")))));
     }
 
     @Test void rarityColorsOverrideExplicitNestedNameAndGlyphColors() throws Exception {
@@ -111,8 +114,8 @@ class ItemLanguageTest {
         for (var entry : colors.entrySet()) {
             var item = item("rarity: " + entry.getKey()
                     + "\ndisplay-name: '<white>Probe <red>Blade</red> <bold><gradient:red:blue>Glow</gradient></bold> <glyph:name>'\n");
-            Component name = lang.displayName(item, ignored -> Component.text("Glyph", NamedTextColor.LIGHT_PURPLE)
-                    .append(Component.text(" Child", NamedTextColor.GREEN)));
+            Component name = lang.displayName(item, glyphs(ignored -> Component.text("Glyph", NamedTextColor.LIGHT_PURPLE)
+                    .append(Component.text(" Child", NamedTextColor.GREEN))));
             assertEquals("Probe Blade Glow Glyph Child", PLAIN.serialize(name));
             assertColorTree(name, entry.getValue());
             assertEquals(TextDecoration.State.FALSE, name.decoration(TextDecoration.ITALIC));
@@ -153,7 +156,7 @@ class ItemLanguageTest {
         var glyphName = item("rarity: EPIC\ndisplay-name: '<glyph:name>'\n");
         Component glyph = Component.translatable("custom.typed").arguments(
                 Component.text("Blade", NamedTextColor.RED), TranslationArgument.numeric(3), TranslationArgument.bool(true));
-        var glyphTranslation = assertInstanceOf(TranslatableComponent.class, lang.displayName(glyphName, ignored -> glyph));
+        var glyphTranslation = assertInstanceOf(TranslatableComponent.class, lang.displayName(glyphName, glyphs(ignored -> glyph)));
         assertColorTree(glyphTranslation, TextColor.color(0x9554EA));
         assertEquals(3, assertInstanceOf(Number.class, glyphTranslation.arguments().get(1).value()).intValue());
         assertEquals(true, glyphTranslation.arguments().get(2).value());
@@ -226,14 +229,70 @@ class ItemLanguageTest {
                 () -> language("rarities:\n  common: '<glyph>'\n"));
         assertTrue(error.getMessage().contains("lang.yml.rarities.common"));
         assertThrows(IllegalArgumentException.class, () -> language("rarities:\n  common: '<glyph:>'\n"));
-        assertThrows(IllegalArgumentException.class, () -> language("rarities:\n  common: '<glyph:tag_common:extra>'\n"));
         assertThrows(IllegalArgumentException.class, () -> language("rarities:\n  common: '<glyph:tag_common'\n"));
     }
 
     @Test void acceptsQuotedGlyphIdsAndEscapedLiteralTags() throws Exception {
         var lang = language("");
-        assertEquals("tag_common", PLAIN.serialize(lang.render("<glyph:'tag_common'>", Map.of(), Component::text)));
+        assertEquals("tag_common", PLAIN.serialize(lang.render("<glyph:'tag_common'>", Map.of(), glyphs(Component::text))));
         assertEquals("<glyph>", PLAIN.serialize(lang.render("\\<glyph>", Map.of(), null)));
+    }
+
+    @Test void nativeOptionsFontsAndShiftsWorkAcrossItemAndLanguageTemplates() throws Exception {
+        var argsSeen = new java.util.ArrayList<String>();
+        var nativeTags = TagResolver.builder()
+                .resolver(TagResolver.resolver("glyph", (args, context) -> {
+                    argsSeen.clear();
+                    while (args.hasNext()) argsSeen.add(args.pop().value());
+                    return Tag.inserting(Component.text("ICON").font(net.kyori.adventure.key.Key.key("nexo:icons")));
+                }))
+                .resolver(TagResolver.resolver("shift", (args, context) -> Tag.inserting(Component.text("SHIFT" + args.pop().value()))))
+                .build();
+        var lang = language("messages:\n  list: '<glyph:heart:2..3:colorable:shadow:#80ffffff><shift:-8>{items}'\n");
+        var result = lang.text("messages.list", Map.of("items", "<glyph:unsafe><shift:9>"), nativeTags, null);
+        assertEquals("ICONSHIFT-8<glyph:unsafe><shift:9>", PLAIN.serialize(result));
+        assertEquals(List.of("heart", "2..3", "colorable", "shadow", "#80ffffff"), argsSeen);
+        var item = item("display-name: '<glyph:heart:c>'\nlore: ['<glyph:heart:2>']\n");
+        Component name = lang.displayName(item, nativeTags, null);
+        assertEquals("ICON", PLAIN.serialize(name));
+        assertTrue(hasFont(name, "nexo:icons"));
+        assertTrue(plain(lang.lore(item, 10, Set.of(), nativeTags, null)).contains("ICON"));
+        assertColorTree(name, NamedTextColor.GRAY);
+    }
+
+    @Test void nativeEmptyOrMissingGlyphUsesConfiguredFallbackWithoutRecursion() throws Exception {
+        var lang = language("glyph-fallbacks:\n  heart: '<gold>Heart <glyph:other>'\n");
+        for (TagResolver tags : java.util.Arrays.asList(null, TagResolver.empty(),
+                TagResolver.resolver("glyph", (args, context) -> { while (args.hasNext()) args.pop(); return Tag.inserting(Component.empty()); }))) {
+            assertEquals("Heart <glyph:other>", PLAIN.serialize(lang.render("<glyph:heart:colorable><shift:-8>", Map.of(), tags, null)));
+            assertEquals("", PLAIN.serialize(lang.render("<glyph:unknown><shift:8>", Map.of(), tags, null)));
+        }
+    }
+
+    @Test void nativeGlobalResolverReceivesActualTargetForEveryTemplatePath() throws Exception {
+        net.kyori.adventure.pointer.Pointered viewer = new net.kyori.adventure.pointer.Pointered() { };
+        var tags = TagResolver.resolver("glyph", (args, context) -> {
+            args.pop();
+            return Tag.inserting(Component.text(context.target() == viewer ? "VIEWER" : "GLOBAL"));
+        });
+        var lang = language("types:\n  item: '<glyph:heart>'\nrequirement-labels:\n  default: '<glyph:heart>'\n  planetry-gamelevel: '<glyph:heart>'\nmessages:\n  list: '<glyph:heart>'\n");
+        var item = item("display-name: '<glyph:heart>'\nlore: ['<glyph:heart>']\nrequirements:\n  planetry-gamelevel: 5\n");
+        assertEquals("VIEWER", PLAIN.serialize(lang.render("<glyph:heart>", Map.of(), tags, viewer)));
+        assertEquals("VIEWER", PLAIN.serialize(lang.text("messages.list", Map.of(), tags, viewer)));
+        assertEquals("VIEWER", PLAIN.serialize(lang.displayName(item, tags, viewer)));
+        assertEquals("VIEWER", lang.requirementLabel("planetry-gamelevel", 5, tags, viewer));
+        assertEquals("VIEWER", lang.requirementSummary(item, Set.of("planetry-gamelevel"), tags, viewer));
+        assertEquals("VIEWER", plain(lang.lore(item, 100, Set.of(), tags, viewer)).getFirst());
+        assertEquals("GLOBAL", PLAIN.serialize(lang.render("<glyph:heart>", Map.of(), tags, null)));
+    }
+
+    private static boolean hasFont(Component component, String font) {
+        return component.font() != null && component.font().asString().equals(font)
+                || component.children().stream().anyMatch(child -> hasFont(child, font));
+    }
+
+    private static Function<String, Component> glyphs(Function<String, Component> glyph) {
+        return glyph;
     }
 
     private ItemLanguage language(String content) throws Exception {

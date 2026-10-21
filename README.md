@@ -134,6 +134,28 @@ Their default Nexo glyphs are `tag_common`, `tag_uncommon`, `tag_rare`, `tag_epi
 `tag_legendary` and `tag_mythical`. Edit their templates and text fallbacks in
 `lang.yml`. The native Nexo resolver preserves the glyph's configured font.
 
+Nexo tags work in item `display-name`, flavour lore and all `lang.yml` templates,
+including type/attribute/requirement prefixes, rarities and command messages.
+Use `<glyph:heart>` with your actual Nexo glyph ID rather than copying its raw
+Unicode. Native options are forwarded to Nexo, for example
+`<glyph:heart:2..3:colorable:shadow:#80ffffff>`, and `<shift:-8>` adjusts spacing.
+See [Nexo's glyph documentation](https://docs.nexomc.com/configuration/glyphs).
+The item viewer or message recipient is passed as MiniMessage's target, so
+current Nexo can check glyph/shift permissions. Older player-aware resolver APIs
+are supported too; console output uses the global resolver. Display names still
+use PlanetryItems' rarity color, including glyphs.
+
+If Nexo is missing, disabled, incompatible, throws or returns an empty glyph,
+`glyph-fallbacks.<id>` in `lang.yml` supplies ordinary MiniMessage text. Without a
+fallback, the glyph produces no text; unavailable shift tags are also empty.
+With a working hook, Nexo owns unknown-ID and permission behavior, including its
+`required` glyph or literal denied tag. Fallback text does not expand
+further glyph/shift tags. Dynamic `{values}` remain literal and cannot inject tags.
+After editing templates, run `/pitems reload`; use `/migrate` to refresh existing
+items subject to its normal cooldown. Installing or updating Nexo requires a backend restart.
+This integration applies to text rendered by PlanetryItems. Other plugins manage
+their own tablist, scoreboard and chat formatting.
+
 Types: `ITEM`, `TOOL`, `WEAPON`, `ARMOUR`, `FOOD`, `COSMETIC`, `ADDON`, `SPACESUIT`.
 Wearable types support `HEAD`, `CHEST`, `LEGS`, `FEET` or `OFF_HAND`, defaulting to
 `HEAD`. Paper's native equippable component lets materials such as PAPER occupy

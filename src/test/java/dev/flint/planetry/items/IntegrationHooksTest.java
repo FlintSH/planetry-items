@@ -48,6 +48,7 @@ class IntegrationHooksTest {
             case "dev.aurelium.auraskills.api.util.AuraSkillsModifier$Operation" -> Operation.class;
             case "com.nexomc.nexo.api.NexoItems" -> FakeNexo.class;
             case "com.nexomc.nexo.glyphs.GlyphTag" -> FakeGlyph.class;
+            case "com.nexomc.nexo.glyphs.ShiftTag" -> FakeShift.class;
             default -> throw new ClassNotFoundException(name);
         }, ItemStack::clone);
     }
@@ -171,6 +172,45 @@ class IntegrationHooksTest {
         assertNull(hooks.glyph("tag_common><red>"));
     }
 
+    @Test void nativeArgumentsAndShiftAreForwardedAndDisabledHooksStopResolving() {
+        Plugin nexo = enabled("Nexo", Plugin.class);
+        var tags = hooks.glyphs(player); // Current API only provides the global getter.
+        var mini = net.kyori.adventure.text.minimessage.MiniMessage.miniMessage();
+        assertEquals(Component.text("SHIFT[-8]"), mini.deserialize("<shift:-8>", tags));
+        var options = mini.deserialize("<glyph:options:2..3:colorable:shadow:#80ffffff>", tags);
+        assertEquals(Component.text("2..3,colorable,shadow,#80ffffff").font(Key.key("nexo:rarity")), options);
+        when(nexo.isEnabled()).thenReturn(false);
+        assertEquals(Component.text("<glyph:tag_common>"), mini.deserialize("<glyph:tag_common>", tags));
+    }
+
+    @Test void olderPlayerAwareResolverReceivesViewerAndConsoleUsesGlobal() {
+        enabled("Nexo", Plugin.class);
+        var playerHooks = nativeHooks(PlayerGlyph.class, FakeShift.class);
+        var mini = net.kyori.adventure.text.minimessage.MiniMessage.miniMessage();
+        assertEquals(Component.text(id.toString()), mini.deserialize("<glyph:tag_common>", playerHooks.glyphs(player)));
+        assertEquals(Component.text("global"), mini.deserialize("<glyph:tag_common>", playerHooks.glyphs(null)));
+    }
+
+    @Test void incompatibleAndThrowingNativeApisFailIndependently() {
+        enabled("Nexo", Plugin.class);
+        var mini = net.kyori.adventure.text.minimessage.MiniMessage.miniMessage();
+        for (Class<?> bad : new Class<?>[]{String.class, ThrowingGlyph.class, BadResolver.class}) {
+            var tags = nativeHooks(bad, FakeShift.class).glyphs(player);
+            assertEquals(Component.text("<glyph:tag_common>SHIFT[8]"),
+                    mini.deserialize("<glyph:tag_common><shift:8>", tags));
+        }
+        assertEquals(Component.text("\uE001").font(Key.key("nexo:rarity")),
+                mini.deserialize("<glyph:tag_common>", nativeHooks(FakeGlyph.class, String.class).glyphs(player)));
+    }
+
+    private IntegrationHooks nativeHooks(Class<?> glyph, Class<?> shift) {
+        return new IntegrationHooks(plugin, (name, loader) -> switch (name) {
+            case "com.nexomc.nexo.glyphs.GlyphTag" -> glyph;
+            case "com.nexomc.nexo.glyphs.ShiftTag" -> shift;
+            default -> throw new ClassNotFoundException(name);
+        });
+    }
+
     @Test void nexoBuildUsesAppearanceCopierAndMissingIdsFailSafely() {
         enabled("Nexo", Plugin.class);
         ItemStack source = mock(ItemStack.class);
@@ -229,8 +269,37 @@ class IntegrationHooksTest {
     public static final class FakeGlyph {
         public static final FakeGlyph INSTANCE = new FakeGlyph();
         public TagResolver getRESOLVER() {
-            return TagResolver.resolver("glyph", (arguments, context) -> arguments.pop().value().equals("tag_common")
-                    ? Tag.inserting(Component.text("\uE001").font(Key.key("nexo", "rarity"))) : null);
+            return TagResolver.resolver("glyph", (arguments, context) -> {
+                String name = arguments.pop().value();
+                if (name.equals("tag_common")) return Tag.inserting(Component.text("\uE001").font(Key.key("nexo:rarity")));
+                if (!name.equals("options")) return null;
+                var options = new java.util.ArrayList<String>();
+                while (arguments.hasNext()) options.add(arguments.pop().value());
+                return Tag.inserting(Component.text(String.join(",", options)).font(Key.key("nexo:rarity")));
+            });
         }
+    }
+    public static final class FakeShift {
+        public static final FakeShift INSTANCE = new FakeShift();
+        public TagResolver getRESOLVER() {
+            return TagResolver.resolver("shift", (args, context) -> Tag.inserting(Component.text("SHIFT[" + args.pop().value() + "]")));
+        }
+    }
+    public static final class PlayerGlyph {
+        public static final PlayerGlyph INSTANCE = new PlayerGlyph();
+        public TagResolver getResolverForPlayer(Player viewer) {
+            return TagResolver.resolver("glyph", (args, context) -> { args.pop(); return Tag.inserting(Component.text(viewer.getUniqueId().toString())); });
+        }
+        public TagResolver getRESOLVER() { return TagResolver.resolver("glyph", (args, context) -> { args.pop(); return Tag.inserting(Component.text("global")); }); }
+    }
+    public static final class ThrowingGlyph {
+        public static final ThrowingGlyph INSTANCE = new ThrowingGlyph();
+        public TagResolver getRESOLVER() {
+            return TagResolver.resolver("glyph", (args, context) -> { args.pop(); throw new LinkageError("test"); });
+        }
+    }
+    public static final class BadResolver {
+        public static final BadResolver INSTANCE = new BadResolver();
+        public Object getRESOLVER() { return "incompatible"; }
     }
 }

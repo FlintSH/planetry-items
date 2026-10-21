@@ -67,8 +67,8 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         items.validate(nextCatalog);
         ItemLanguage nextLanguage = ItemLanguage.load(data.resolve("lang.yml"));
         for (var definition : nextCatalog.definitions().values()) {
-            nextLanguage.render(definition.displayName(), Map.of(), hooks::glyph);
-            nextLanguage.lore(definition, definition.maxDurability(), definition.requirements().keySet(), hooks::glyph);
+            nextLanguage.render(definition.displayName(), Map.of(), hooks.glyphs(null), null);
+            nextLanguage.lore(definition, definition.maxDurability(), definition.requirements().keySet(), hooks.glyphs(null), null);
         }
         catalog = nextCatalog; language = nextLanguage; refreshTicks = ticks;
     }
@@ -81,7 +81,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     public ItemGuard guard() { return guard; }
 
     public void message(CommandSender recipient, String key, Map<String, String> values) {
-        recipient.sendMessage(language.text(key, values, hooks::glyph));
+        recipient.sendMessage(language.text(key, values, hooks.glyphs(recipient instanceof Player player ? player : null), recipient));
     }
 
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -169,9 +169,9 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         def.attributes().forEach((key, value) -> attributes.add(key + "=" + value.amount()
                 + " (" + value.operation() + ", " + value.slot() + ")"));
         var requirements = new ArrayList<String>();
-        def.requirements().forEach((key, value) -> requirements.add(language.requirementLabel(key, value, hooks::glyph) + " (" + key + ")"));
+        def.requirements().forEach((key, value) -> requirements.add(language.requirementLabel(key, value, hooks.glyphs(player), player) + " (" + key + ")"));
         var values = new LinkedHashMap<String, String>();
-        values.put("id", def.id()); values.put("name", plain.serialize(language.displayName(def, hooks::glyph)));
+        values.put("id", def.id()); values.put("name", plain.serialize(language.displayName(def, hooks.glyphs(player), player)));
         values.put("material", stack.getType().name()); values.put("configured-material", def.material());
         values.put("rarity", def.rarity()); values.put("type", def.type());
         values.put("model", stack.getItemMeta().getCustomModelDataComponent().getFloats().toString());
@@ -184,7 +184,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         values.put("attributes", attributes.isEmpty() ? "none" : String.join("; ", attributes));
         values.put("bonuses", def.bonuses().isEmpty() ? "none" : def.bonuses().toString());
         values.put("requirements", requirements.isEmpty() ? "none" : String.join(", ", requirements));
-        values.put("lore", String.join(" | ", def.lore().stream().map(line -> plain.serialize(language.render(line, Map.of(), hooks::glyph))).toList()));
+        values.put("lore", String.join(" | ", def.lore().stream().map(line -> plain.serialize(language.render(line, Map.of(), hooks.glyphs(player), player))).toList()));
         values.put("usable", Boolean.toString(items.usable(player, stack)));
         message(player, "messages.info", values);
         // Detail output remains complete even when an administrator retains the old customizable header.

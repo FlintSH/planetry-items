@@ -14,6 +14,9 @@ import io.papermc.paper.datacomponent.DataComponentType;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.Context;
+import net.kyori.adventure.text.minimessage.tag.Tag;
+import net.kyori.adventure.text.minimessage.tag.resolver.ArgumentQueue;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.Player;
@@ -88,23 +91,52 @@ public final class IntegrationHooks implements AutoCloseable {
         return result;
     }
 
-    /** Nexo's native resolver preserves the configured glyph font. Null lets callers use a text rarity. */
+    /** Native tags retain Nexo fonts, bitmap/color/shadow arguments and optional viewer permissions. */
+    public TagResolver glyphs(Player viewer) {
+        Plugin nexo = enabled("Nexo");
+        if (nexo == null) return TagResolver.empty();
+        var result = TagResolver.builder();
+        for (String name : new String[]{"glyph", "shift"}) {
+            try {
+                Class<?> type = load(nexo, "com.nexomc.nexo.glyphs."
+                        + (name.equals("glyph") ? "GlyphTag" : "ShiftTag"));
+                Object instance = type.getField("INSTANCE").get(null);
+                Method method = null;
+                if (name.equals("glyph") && viewer != null) {
+                    try { method = type.getMethod("getResolverForPlayer", Player.class); }
+                    catch (NoSuchMethodException unavailable) { /* Current Nexo uses the global resolver. */ }
+                }
+                Object resolved = method == null ? type.getMethod("getRESOLVER").invoke(instance)
+                        : method.invoke(instance, viewer);
+                if (!(resolved instanceof TagResolver nativeResolver))
+                    throw new ReflectiveOperationException("Nexo did not provide an Adventure TagResolver");
+                result.resolver(new TagResolver() {
+                    @Override public Tag resolve(String tag, ArgumentQueue args, Context context) {
+                        try {
+                            return name.equals(tag) && nexo.isEnabled() && nativeResolver.has(tag)
+                                    ? nativeResolver.resolve(tag, args, context) : null;
+                        } catch (RuntimeException | LinkageError error) {
+                            warn("Nexo " + name + " tags", error);
+                            return null;
+                        }
+                    }
+                    @Override public boolean has(String tag) {
+                        return name.equals(tag) && nexo.isEnabled();
+                    }
+                });
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+                warn("Nexo " + name + " tags", error);
+            }
+        }
+        return result.build();
+    }
+
+    /** Compatibility helper for callers that only need one glyph. */
     public Component glyph(String id) {
         if (id == null || !id.matches("[A-Za-z0-9_.-]{1,128}")) return null;
-        Plugin nexo = enabled("Nexo");
-        if (nexo == null) return null;
-        try {
-            Class<?> type = load(nexo, "com.nexomc.nexo.glyphs.GlyphTag");
-            Object instance = type.getField("INSTANCE").get(null);
-            Object resolved = type.getMethod("getRESOLVER").invoke(instance);
-            if (!(resolved instanceof TagResolver resolver) || !resolver.has("glyph")) return null;
-            String tag = "<glyph:" + id + ">";
-            Component result = MINI.deserialize(tag, resolver);
-            return PlainTextComponentSerializer.plainText().serialize(result).contains("<glyph:") ? null : result;
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            warn("Nexo glyphs", error);
-            return null;
-        }
+        String tag = "<glyph:" + id + ">";
+        Component result = MINI.deserialize(tag, glyphs(null));
+        return PlainTextComponentSerializer.plainText().serialize(result).contains("<glyph:") ? null : result;
     }
 
     /** Reads Core's actual game progress rather than Minecraft's displayed experience level. */
