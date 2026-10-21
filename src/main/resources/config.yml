@@ -1,0 +1,6 @@
+# PlanetryItems configuration. Reload with /planetryitems reload.
+# Paper/Purpur 26.1.2 and Java 25 are required.
+
+# Refresh viewer-specific requirements and active AuraSkills bonuses every second.
+# Inventory Sync readiness is checked before modifying a player's inventory.
+refresh-interval-ticks: 20

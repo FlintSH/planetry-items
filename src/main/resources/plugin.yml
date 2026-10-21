@@ -1,0 +1,16 @@
+name: PlanetryItems
+version: '${project.version}'
+main: dev.flint.planetry.items.PlanetryItems
+api-version: '26.1.2'
+description: Configurable items, requirements and equipment for Planetry.
+authors: [FlintSH]
+softdepend: [PlanetryCore, AuraSkills, Nexo, NetworkInventorySync]
+commands:
+  planetryitems:
+    aliases: [pitems]
+    description: Manage Planetry custom items
+    usage: /<command> <list|give|reload>
+permissions:
+  planetryitems.admin:
+    description: List, give and reload custom items
+    default: op

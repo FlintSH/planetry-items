@@ -1,0 +1,180 @@
+package dev.flint.planetry.items;
+
+import com.destroystokyo.paper.profile.ProfileProperty;
+import com.google.common.collect.HashMultimap;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import org.bukkit.*;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.*;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.SkullMeta;
+import org.bukkit.persistence.PersistentDataType;
+
+/** Main-thread item API. Item identities and durability travel in persistent item data. */
+public final class ItemService {
+    private final PlanetryItems plugin;
+    private final NamespacedKey identity, durability, oxygen;
+
+    public ItemService(PlanetryItems plugin) {
+        this.plugin = plugin;
+        identity = new NamespacedKey(plugin, "item_id");
+        durability = new NamespacedKey(plugin, "durability");
+        oxygen = new NamespacedKey(plugin, "oxygen");
+    }
+
+    public void validate(ItemCatalog catalog) {
+        for (var def : catalog.definitions().values()) {
+            var material = Material.matchMaterial(def.material());
+            if (material == null || material.isAir() || !material.isItem())
+                throw new IllegalArgumentException(def.id() + ": material must be an item");
+            if (present(def.base64()) && material != Material.PLAYER_HEAD)
+                throw new IllegalArgumentException(def.id() + ": base64 needs material PLAYER_HEAD");
+            for (var entry : def.attributes().entrySet()) {
+                if (attribute(entry.getKey()) == null)
+                    throw new IllegalArgumentException(def.id() + ": unknown Minecraft attribute " + entry.getKey());
+                if (EquipmentSlotGroup.getByName(entry.getValue().slot().toLowerCase(Locale.ROOT)) == null)
+                    throw new IllegalArgumentException(def.id() + ": invalid attribute slot");
+            }
+        }
+    }
+
+    public ItemStack create(String id, Player viewer) {
+        var def = plugin.catalog().get(id);
+        if (def == null) throw new IllegalArgumentException("Unknown item " + id);
+        ItemStack stack = !present(def.nexoId()) ? new ItemStack(Objects.requireNonNull(Material.matchMaterial(def.material())))
+                : plugin.hooks().nexoItem(def.nexoId()).clone();
+        stack.setAmount(1);
+        var meta = stack.getItemMeta();
+        meta.getPersistentDataContainer().set(identity, PersistentDataType.STRING, id);
+        if (present(def.base64())) {
+            if (!(meta instanceof SkullMeta skull)) throw new IllegalArgumentException(id + ": Nexo item is not a player head");
+            var profile = Bukkit.createProfile(UUID.nameUUIDFromBytes(def.base64().getBytes(StandardCharsets.UTF_8)));
+            profile.setProperty(new ProfileProperty("textures", def.base64()));
+            skull.setPlayerProfile(profile);
+        }
+        meta.getPersistentDataContainer().set(durability, PersistentDataType.INTEGER, def.maxDurability());
+        stack.setItemMeta(meta);
+        refresh(stack, viewer);
+        return stack;
+    }
+
+    public String id(ItemStack stack) {
+        if (stack == null || stack.getType().isAir() || !stack.hasItemMeta()) return null;
+        return stack.getItemMeta().getPersistentDataContainer().get(identity, PersistentDataType.STRING);
+    }
+
+    public ItemDefinition definition(ItemStack stack) {
+        String id = id(stack);
+        return id == null ? null : plugin.catalog().get(id);
+    }
+
+    public int currentDurability(ItemStack stack) {
+        var def = definition(stack);
+        if (def == null) return 0;
+        return Math.clamp(stack.getItemMeta().getPersistentDataContainer().getOrDefault(durability,
+                PersistentDataType.INTEGER, def.maxDurability()), 0, def.maxDurability());
+    }
+
+    public Set<String> unmet(Player player, ItemDefinition def) {
+        Set<String> result = new LinkedHashSet<>();
+        for (var entry : def.requirements().entrySet()) {
+            if (entry.getValue() <= 0) continue;
+            Integer level = player == null ? null : entry.getKey().equals("planetry-gamelevel")
+                    ? plugin.hooks().gameLevel(player)
+                    : plugin.hooks().skillLevel(player, entry.getKey().substring("auraskills-required-".length()));
+            if (level == null || level < entry.getValue()) result.add(entry.getKey());
+        }
+        return Collections.unmodifiableSet(result);
+    }
+
+    public boolean usable(Player player, ItemStack stack) {
+        if (id(stack) == null) return true;
+        var def = definition(stack);
+        return def != null && plugin.hooks().inventoryReady(player) && unmet(player, def).isEmpty()
+                && (def.unbreakable() || def.maxDurability() == 0 || currentDurability(stack) > 0);
+    }
+
+    public void refresh(ItemStack stack, Player viewer) {
+        var def = definition(stack);
+        if (def == null) return;
+        var meta = stack.getItemMeta();
+        Set<String> unmet = unmet(viewer, def);
+        meta.displayName(plugin.language().render(def.displayName(), Map.of(), plugin.hooks()::glyph));
+        meta.lore(plugin.language().lore(def, currentDurability(stack), unmet, plugin.hooks()::glyph));
+        meta.setMaxStackSize(def.maxStackSize());
+        // Custom durability is event-driven for every material. Suppress vanilla damage and tooltips.
+        meta.setUnbreakable(true);
+        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE);
+        if (def.customModelData() != null) {
+            var model = meta.getCustomModelDataComponent();
+            model.setFloats(List.of(def.customModelData().floatValue()));
+            meta.setCustomModelDataComponent(model);
+        }
+        if (def.equipSlot() != null && !def.equipSlot().isBlank()) {
+            var equip = meta.getEquippable();
+            equip.setSlot(EquipmentSlot.valueOf(def.equipSlot()));
+            equip.setAllowedEntities(EntityType.PLAYER);
+            equip.setDispensable(true);
+            equip.setEquipOnInteract(true);
+            equip.setSwappable(true);
+            equip.setDamageOnHurt(false);
+            meta.setEquippable(equip);
+        } else meta.setEquippable(null);
+        // Empty explicitly suppresses vanilla/Nexo defaults. Only configured modifiers apply.
+        meta.setAttributeModifiers(HashMultimap.create());
+        if (unmet.isEmpty() && (viewer == null || plugin.hooks().inventoryReady(viewer))) {
+            int index = 0;
+            for (var entry : def.attributes().entrySet()) {
+                var spec = entry.getValue();
+                meta.addAttributeModifier(Objects.requireNonNull(attribute(entry.getKey())), new AttributeModifier(
+                        new NamespacedKey(plugin, def.id() + "/attribute_" + index++), spec.amount(),
+                        AttributeModifier.Operation.valueOf(spec.operation()),
+                        Objects.requireNonNull(EquipmentSlotGroup.getByName(spec.slot().toLowerCase(Locale.ROOT)))));
+            }
+        }
+        if (def.bonuses().containsKey("planetry-oxygen"))
+            meta.getPersistentDataContainer().set(oxygen, PersistentDataType.DOUBLE, def.bonuses().get("planetry-oxygen"));
+        else meta.getPersistentDataContainer().remove(oxygen);
+        stack.setItemMeta(meta);
+        // Minecraft forbids MAX_DAMAGE with stack size >1, including unbreakable items.
+        // Keep native single-item capacity for vanilla usability checks (tridents/elytra),
+        // while UNBREAKABLE and our event guard reserve all wear for the custom counter.
+        if (def.maxStackSize() > 1) {
+            stack.unsetData(DataComponentTypes.MAX_DAMAGE);
+            stack.unsetData(DataComponentTypes.DAMAGE);
+        } else {
+            stack.resetData(DataComponentTypes.MAX_DAMAGE);
+            stack.resetData(DataComponentTypes.DAMAGE);
+        }
+    }
+
+    /** One successful use consumes exactly one point, independent of vanilla material damage rules. */
+    public boolean damage(Player player, ItemStack stack, EquipmentSlot slot) {
+        var def = definition(stack);
+        if (def == null || def.unbreakable() || def.maxDurability() == 0) return false;
+        int remaining = currentDurability(stack) - 1;
+        if (remaining <= 0) {
+            // Native equipment break packet produces normal client break particles/animation.
+            player.broadcastSlotBreak(slot);
+            player.playSound(player.getLocation(), Sound.ENTITY_ITEM_BREAK, 1, 1);
+            stack.setAmount(0);
+            return true;
+        }
+        var meta = stack.getItemMeta();
+        meta.getPersistentDataContainer().set(durability, PersistentDataType.INTEGER, remaining);
+        stack.setItemMeta(meta);
+        refresh(stack, player);
+        return false;
+    }
+
+    private static Attribute attribute(String name) {
+        var key = NamespacedKey.fromString(name);
+        return key == null ? null : Registry.ATTRIBUTE.get(key);
+    }
+    private static boolean present(String value) { return value != null && !value.isBlank(); }
+}

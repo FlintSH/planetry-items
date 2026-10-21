@@ -1,0 +1,80 @@
+# MiniMessage formatting. Dynamic {values} are always inserted as literal text.
+# <glyph:ID> resolves an optional Nexo glyph; glyph-fallbacks are used without it.
+# Item types, every attribute prefix, requirement, rarity and message are editable.
+schema-version: 1
+
+types:
+  item: '<gray>ɪᴛᴇᴍ'
+  tool: '<gray>ᴛᴏᴏʟ'
+  weapon: '<gray>ᴡᴇᴀᴘᴏɴ'
+  armour: '<gray>ᴀʀᴍᴏᴜʀ'
+  food: '<gray>ꜰᴏᴏᴅ'
+  cosmetic: '<gray>ᴄᴏѕᴍᴇᴛɪᴄ'
+  addon: '<gray>ᴀᴅᴅᴏɴ'
+  spacesuit: '<gray>ѕᴘᴀᴄᴇѕᴜɪᴛ'
+
+attributes:
+  # {value} includes + for positive/zero values. {unit} is % for scalar modifiers.
+  default: '<gray>{attribute}: <white>{value}{unit}'
+  minecraft-attack-damage: '<dark_gray>[<#6495ED>🗡<dark_gray>] - Attack Damage <white>{value}{unit}'
+  minecraft-attack-speed: '<dark_gray>[<#FFBF00>🗡<dark_gray>] - Attack Speed <white>{value}{unit}'
+  minecraft-armor: '<dark_gray>[<#7CB9E8>⛨<dark_gray>] - Armour <white>{value}{unit}'
+  minecraft-armor-toughness: '<dark_gray>[<#FEBE10>❁<dark_gray>] - Defence <white>{value}{unit}'
+  minecraft-max-health: '<dark_gray>[<#EE4B2B>❤<dark_gray>] - Health <white>{value}{unit}'
+  auraskills-additional-health: '<dark_gray>[<#EE4B2B>❤<dark_gray>] - Health <white>{value}{unit}'
+  auraskills-additional-toughness: '<dark_gray>[<#FEBE10>❁<dark_gray>] - Defence <white>{value}{unit}'
+  auraskills-additional-strength: '<dark_gray>[<#50C878>⚔<dark_gray>] - Strength <white>{value}{unit}'
+  auraskills-additional-regeneration: '<dark_gray>[<#FF69B4>♡<dark_gray>] - Regeneration <white>{value}{unit}'
+  auraskills-additional-wisdom: '<dark_gray>[<#BF40BF>❃<dark_gray>] - Wisdom <white>{value}{unit}'
+  planetry-oxygen: '<dark_gray>[<#ADD8E6>🫧<dark_gray>] Oxygen <white>{value}{unit}'
+
+requirements:
+  default: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>{requirement} Level {value}'
+  planetry-gamelevel: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Game Level {value}'
+  auraskills-required-farming: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Farming Level {value}'
+  auraskills-required-foraging: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Foraging Level {value}'
+  auraskills-required-mining: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Mining Level {value}'
+  auraskills-required-fishing: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Fishing Level {value}'
+  auraskills-required-fighting: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Fighting Level {value}'
+
+rarities:
+  common: '<glyph:tag_common>'
+  uncommon: '<glyph:tag_uncommon>'
+  rare: '<glyph:tag_rare>'
+  epic: '<glyph:tag_epic>'
+  legendary: '<glyph:tag_legendary>'
+  mythical: '<glyph:tag_mythical>'
+
+glyph-fallbacks:
+  tag_common: '<white>COMMON'
+  tag_uncommon: '<green>UNCOMMON'
+  tag_rare: '<#6495ED>RARE'
+  tag_epic: '<#BF40BF>EPIC'
+  tag_legendary: '<gold>LEGENDARY'
+  tag_mythical: '<light_purple>MYTHICAL'
+
+lore:
+  durability: '<gray>Durability: {current}/{max}'
+  durability-low: '<gray>Durability: <red>{current}<gray>/{max}'
+  unbreakable: '<gray>Unbreakable'
+
+messages:
+  usage: '<gray>/planetryitems list | give <player> <item> [amount] | reload | info'
+  no-permission: '<red>You do not have permission to do that.'
+  player-only: '<red>Only players can use this command.'
+  unknown-item: '<red>Unknown item: {item}.'
+  player-not-found: '<red>Player not found: {player}.'
+  invalid-amount: '<red>Enter a valid whole number of items.'
+  inventory-full: '<red>{player} does not have enough inventory space.'
+  given: '<green>Gave {amount} × {item} to {player}.'
+  received: '<green>You received {amount} × {item}.'
+  reloaded: '<green>PlanetryItems reloaded.'
+  reload-failed: '<red>Could not reload PlanetryItems: {error}. The previous configuration is still active.'
+  requirements: '<red>You cannot use {item}: {requirements}.'
+  requirements-not-met: '<red>You cannot use {item}: {requirements}.'
+  workstation-blocked: '<red>Custom items cannot be used in crafting or workstations.'
+  list: '<gray>PlanetryItems: <white>{items}'
+  disabled-item: '<red>This item is unavailable. Contact an administrator.'
+  integration-unavailable: '<red>This item needs an integration that is currently unavailable.'
+  no-item: '<red>Hold a Planetry item first.'
+  info: '<gray>Item: <white>{id}<gray>, durability: <white>{current}/{max}'

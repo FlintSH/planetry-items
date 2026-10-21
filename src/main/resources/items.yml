@@ -1,0 +1,103 @@
+# PlanetryItems item catalog. All settings are optional except the item ID.
+# IDs use lowercase letters, numbers, _ and -. /planetryitems give <player> <id> [amount]
+# Configuration is validated completely before a reload replaces the active catalog.
+schema-version: 1
+items:
+  lunar_crystal:
+    material: AMETHYST_SHARD
+    display-name: '<#BF40BF>Lunar Crystal'
+    lore:
+      - '<gray>A fragment of the moon.'
+      - '<gray>It hums softly in your hand.'
+    custom-model-data: 1001
+    rarity: RARE
+    type: ITEM
+    max-stack-size: 64
+    # 0 disables durability. Breakable items must have max-stack-size: 1.
+    max-durability: 0
+    # Missing, blank and empty bonus/requirement sections add nothing.
+    bonuses: {}
+    requirements: {}
+
+  moonblade:
+    material: IRON_SWORD
+    display-name: '<#6495ED>Moonblade'
+    lore: |
+      <gray>A blade forged beneath the stars.
+      <gray>Only practiced fighters can wield it.
+    rarity: EPIC
+    type: WEAPON
+    max-stack-size: 1
+    max-durability: 250
+    unbreakable: false
+    # Vanilla material attributes are cleared. Only listed modifiers apply.
+    # Any registered Minecraft attribute can be used here, including future ones.
+    attributes:
+      minecraft:attack_damage: 7
+      minecraft:attack_speed:
+        amount: -2.4
+        operation: ADD_NUMBER
+        slot: MAINHAND
+      # Other operations: ADD_SCALAR and MULTIPLY_SCALAR_1 (0.1 means +10%).
+    bonuses:
+      auraskills-additional-wisdom: 2
+      auraskills-additional-health: 1
+      auraskills-additional-regeneration: 1
+      auraskills-additional-toughness: 1
+      auraskills-additional-strength: 3
+    requirements:
+      planetry-gamelevel: 5
+      auraskills-required-fighting: 10
+
+  explorer_helmet:
+    # Wearable material does not need to be a vanilla helmet.
+    material: PAPER
+    display-name: '<#ADD8E6>Explorer Helmet'
+    lore:
+      - '<gray>Prepared for the next expedition.'
+    custom-model-data: 1002
+    rarity: LEGENDARY
+    type: SPACESUIT
+    # ARMOUR, SPACESUIT and COSMETIC support HEAD, CHEST, LEGS, FEET,
+    # and OFF_HAND. BODY is an animal slot and cannot be used for player equipment.
+    equip-slot: HEAD
+    max-stack-size: 1
+    max-durability: 500
+    bonuses:
+      # Oxygen is stored in persistent item NBT for future Planetry plugins.
+      planetry-oxygen: 100
+      # Numeric minecraft-* aliases use ADD_NUMBER in the item's equipment slot.
+      minecraft-armor: 3
+    requirements:
+      planetry-gamelevel: 2
+
+  keepsake:
+    material: PLAYER_HEAD
+    display-name: '<gold>Space Keepsake'
+    rarity: MYTHICAL
+    type: COSMETIC
+    equip-slot: HEAD
+    max-durability: 0
+    unbreakable: true
+    # Optional texture source. Base64 requires PLAYER_HEAD; nexo-id and base64
+    # cannot both be set. Leave both blank to use the material/custom-model-data.
+    base64: ''
+    nexo-id: ''
+
+# To use an installed Nexo item's texture, create another item with:
+#   nexo_pickaxe:
+#     nexo-id: your_nexo_item_id
+#     material: DIAMOND_PICKAXE
+#     display-name: '<aqua>Space Pickaxe'
+#     type: TOOL
+#     rarity: UNCOMMON
+#     max-durability: 800
+#     requirements:
+#       auraskills-required-mining: 10
+#       auraskills-required-foraging: 5
+#       auraskills-required-farming: 5
+#       auraskills-required-fishing: 5
+#
+# Nexo, AuraSkills and PlanetryCore are optional. Positive level requirements block
+# use when their integration is unavailable. Nexo textures require Nexo to create
+# the item. AuraSkills bonuses apply only while AuraSkills is available.
