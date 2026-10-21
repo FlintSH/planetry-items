@@ -11,7 +11,7 @@ Releases remain prereleases while the full production plugin combination awaits 
 ## Install and configure
 
 1. Stop the backend, add the JAR to its `plugins` folder and start it.
-2. Edit `plugins/PlanetryItems/items.yml` to define items and `lang.yml` to change
+2. Edit YAML files in `plugins/PlanetryItems/items/` to define items and `lang.yml` to change
    names, prefixes, messages, types, rarity glyphs and durability text.
 3. Run `/planetryitems reload`. Invalid files retain the previous active catalog.
    Plugin installation or changes to optional plugins require a server restart.
@@ -32,12 +32,13 @@ Nexo finishes loading. PlanetryItems copies the source item's material and visua
 components (item model, custom model data, head profile, dye, trim and equipment
 appearance). It does not import its identity, updater, enchantments, attributes,
 name, lore or custom gameplay. This keeps Nexo updates from replacing Planetry's
-metadata. Visual changes to a source Nexo item apply to newly created items.
+metadata. Visual changes to a source Nexo item apply on creation and inventory migration.
 See [Nexo's API documentation](https://docs.nexomc.com/community-guides/api).
 
 ## Commands and permission
 
-All management commands require `planetryitems.admin` (operators by default).
+All management commands require `planetry.admin.items` (operators by default).
+The old `planetryitems.admin` permission no longer grants access.
 Players do not need this permission to use items or meet their requirements.
 There is no requirements bypass permission.
 
@@ -45,18 +46,48 @@ There is no requirements bypass permission.
 | --- | --- |
 | `/planetryitems list` | List configured IDs |
 | `/planetryitems give <online-player> <id> [amount]` | Give 1–2304 items; a full inventory receives no partial grant |
-| `/planetryitems info` | Show the held item's ID and durability |
+| `/planetryitems info` | Show all held-item settings, effective model/material, attributes, bonuses and requirements |
+| `/migrate` | Public, player-only inventory update; no permission; two-hour cooldown |
 | `/planetryitems reload` | Validate and reload all item and language files together |
 
 `/pitems` is an alias. Back up the item definitions before changing IDs or durability.
-A removed ID cannot be used, and its native bonuses are cleared when the holder is
-next reconciled. Existing items keep their remaining durability, capped to a new
-maximum; reload never repairs them. Newly configured textures are applied on creation.
+Migration rebuilds definition-owned material, texture, model, name, lore, equipment,
+attributes and bonuses while preserving quantity, enchantments and unrelated persistent
+data, container/bundle contents, book text and stored enchantments. Existing items keep their remaining durability, capped to a new maximum;
+migration never repairs them. Player storage, armour, offhand and cursor are scanned;
+ender chests and unopened containers are outside this command's scope.
+
+Joining each backend (including a server switch) automatically migrates the inventory
+after Inventory Sync reports ready. Reload queues the same update for online players.
+Automatic updates do not consume the manual command's cooldown. `/migrate` stores its
+last successful use in player persistent data, surviving reconnects/restarts on that
+backend. The cooldown is per backend, not a shared network database. An unavailable
+inventory does not consume it. A partial update also leaves the command available.
+
+Removed IDs are deleted during migration/reconciliation. Each removed stack sends
+its saved display name and asks the player to contact staff if removal is a mistake.
+Keep matching catalogs on every backend: moving to a backend missing an ID removes
+that item. Back up definitions and player data before intentionally deleting IDs.
+If a changed stack size needs more storage, migration splits it only when all extra
+stacks fit. Otherwise the stack stays intact and the result reports an incomplete
+update. Missing Nexo sources also retain the original item. Automatic session updates retry
+every five seconds until the missing source or storage space becomes available.
 
 ## Item definitions
 
-The bundled `items.yml` contains a stackable crystal, a sword, a paper spacesuit
-helmet and an unbreakable cosmetic head. Add more entries under `items`:
+Fresh installs create `items/examples.yml` with a stackable crystal, sword, paper
+spacesuit helmet and unbreakable cosmetic head. YAML files (`.yml` or `.yaml`) are
+loaded recursively, so `items/weapons/swords.yml` and `items/spacesuits/helmets.yml`
+can organize definitions. Each file uses the same `items:` structure below.
+IDs must be unique across the entire directory; one invalid file rejects the reload.
+An empty folder intentionally defines no items. Symbolic links are rejected.
+
+On the first upgrade, an existing root `items.yml` is copied to `items/imported.yml`.
+The root file remains as a backup and is ignored after the directory exists. Edit the
+imported file or move its entries into subfolders, rather than editing the old backup.
+Existing directories are never repopulated with examples or imported again.
+
+Add entries under `items`:
 
 ```yaml
 schema-version: 1
@@ -92,7 +123,9 @@ items:
 
 `material` defaults to STONE (PLAYER_HEAD when Base64 is configured). Nexo's
 source material wins when `nexo-id` is used. Explicit custom model data overrides
-copied Nexo custom model data. Names and lore support MiniMessage; `lore` accepts
+copied Nexo custom model data. Names and lore support MiniMessage; rarity overrides every name color, including
+explicit color tags. Common is gray, Uncommon green, Rare aqua, Epic `#9554ea`,
+Legendary `#FFBF00` and Mythical red. Other name formatting is retained. `lore` accepts
 a list or a multiline YAML string. Duplicate keys, unsupported settings, invalid
 numbers and unknown registered Minecraft attributes reject the whole reload.
 
@@ -135,8 +168,13 @@ Requirements accept `planetry-gamelevel` and `auraskills-required-farming`,
 `-foraging`, `-mining`, `-fishing`, `-fighting`. Missing/blank values impose no
 requirement; 0 imposes none. Core game level comes from its progress cache,
 not vanilla XP. Missing, disabled, incompatible or unloaded level sources deny
-positive requirements. Players receive a message on denied use. Requirements
-block held use, attacks, mining, consumption, projectiles and equipment routes
+positive requirements. Denied use says `You cannot use this item: <requirements>!`; decorative prefixes
+remain in lore only. Requirement labels and lore have separate language templates. Players may hold restricted items in either hand and move them through storage.
+Their native attributes and AuraSkills bonuses remain inactive while unusable. If
+a cursor still carries old native bonuses after requirements change, its first drag
+is safely cancelled while the cursor is refreshed; the next drag can hold it normally.
+Requirements
+block activation, attacks, mining, consumption, projectiles and armour equipment routes
 including shift-click, number keys, drag, hand swap and dispensers. Restored
 inventories are reconciled when ready; unusable worn items move to storage, or
 drop beside the player if storage is full. A periodic refresh updates level changes
@@ -153,7 +191,8 @@ editable in `lang.yml`. Values appear on separate lines, with white signed value
 by default. Dynamic message substitutions cannot inject MiniMessage formatting.
 
 Items default to 100 durability and stack size 1. Set `max-durability: 0` for no
-counter, or `unbreakable: true` to retain an item without spending durability.
+counter, or `unbreakable: true` to retain an item without spending durability. Unbreakable
+items show neither a durability counter nor an Unbreakable lore/vanilla tooltip line.
 Breakable items require stack size 1; nondamageable/unbreakable items can stack
 up to 99 (wearables remain size 1). Durability is tracked independently of the vanilla material. Native
 damage and repair cannot silently overwrite it.
@@ -190,7 +229,9 @@ bridges, without bundling other plugins' implementation classes.
 
 Future Planetry plugins can obtain `PlanetryItems` from Bukkit's plugin manager
 and use `items().create(id, player)`, `definition(stack)`, `unmet(player, def)`,
-`usable(player, stack)`, `refresh(stack, player)` and `damage(player, stack, slot)`.
+`usable(player, stack)`, `refresh(stack, player)`, `migrate(stack, player)` and
+`damage(player, stack, slot)`. `guard().migrate(player)` applies a complete inventory
+scan and returns updated/removed/failed stack counts; callers must check readiness.
 Declare a dependency/soft dependency and make these calls on the server thread.
 Check Inventory Sync readiness immediately before modifying player inventories.
 `create` builds an item; it does not grant it or bypass requirements.

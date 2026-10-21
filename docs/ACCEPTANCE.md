@@ -18,12 +18,22 @@ AuraSkills2.4.0, Nexo's items/glyphs and Inventory Sync readiness.
 Unit tests validate complete catalogs, duplicate/invalid keys, blank and absent
 values, numeric bounds, slots, model/texture exclusivity, immutable definitions,
 lore ordering/spacing, requirement visibility, formatting, glyph fallback,
-low-durability colouring and optional integration failure/cleanup.
+low-durability colouring and optional integration failure/cleanup. Recursive folder
+ordering, cross-file duplicate rejection, invalid nested definitions, safe one-time
+legacy import, empty directories, symbolic links, rarity name coloring and clean
+requirement messages have regression coverage.
 
 Real Paper probes validate actual ItemStack components and serialization, empty
 vanilla attributes, registry attributes, custom equipment, head texture properties,
 oxygen PDC, use and equipment restrictions, custom durability, commands, full
-inventory grant atomicity, reload retention and the optional bridges. They use
+inventory grant atomicity, reload retention and the optional bridges. Issue11 probes
+cover holding restricted items without native bonuses, full info/permission gates,
+public migration/cooldown, readiness-delayed join migration, definition removal and
+rarity/unbreakable output. Stateful shulker/bundle/book/stored-enchantment data,
+partial-stack merge quantity conservation, safe failed splits, stale-attribute cursor
+repair, quick same-UUID reconnects and delayed Nexo recovery have focused probes.
+The join/quit sequence models a backend switch; it is not
+a connected-client transfer. They use
 controlled Player implementations and Bukkit event dispatch. The command tests
 briefly substitute a forwarding server lookup so controlled players can be found;
 the original server is restored in a finally block. These are not network clients.
@@ -41,7 +51,12 @@ Inventory Sync and protection plugins used by the network:
 3. Exercise melee/mining/protected blocks, food, bows/tridents, shields, wearable
    damage and item break effects. Confirm one use consumed, cancellations do not
    spend one, and AuraSkills stats return to their previous value after removal.
-4. Transfer items between backends with matching definitions, restart them, and
+4. Edit definitions in nested `items/` folders, reload, and try `/migrate` as a
+   non-admin. Check current material/model, all info fields, the two-hour per-backend
+   cooldown, durability preservation and safe stack splitting when space is limited.
+   Delete a test definition, then rejoin and verify removal names that item and asks
+   the player to contact staff. Use disposable test items and matching catalogs.
+5. Transfer items between backends with matching definitions, restart them, and
    verify identity, oxygen and remaining durability survive. Ensure Nexo reloads
    do not replace Planetry metadata, and verify missing/loading integration data
    denies only the operations that depend on it.

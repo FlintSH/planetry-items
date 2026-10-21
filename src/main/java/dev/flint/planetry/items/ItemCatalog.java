@@ -7,13 +7,19 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -42,22 +48,65 @@ public final class ItemCatalog {
         this.definitions = Collections.unmodifiableMap(new LinkedHashMap<>(definitions));
     }
 
-    public static ItemCatalog load(Path file) throws IOException {
-        Map<String, Object> root = readYaml(file);
-        known(root, Set.of("schema-version", "items"), file.getFileName().toString());
-        if (root.containsKey("schema-version") && integer(root.get("schema-version"), "schema-version", 1, 1) != 1) {
-            throw invalid("schema-version", "unsupported version");
-        }
-        Map<String, Object> rawItems = mapping(root.get("items"), "items");
+    /**
+     * Loads a legacy single file or every .yml/.yaml file below a directory.
+     * Directory files are ordered by relative path; each file retains YAML entry order.
+     * Empty directories produce empty catalogs. Symbolic links are rejected, never followed.
+     */
+    public static ItemCatalog load(Path source) throws IOException {
+        BasicFileAttributes attributes = Files.readAttributes(source, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (attributes.isSymbolicLink()) throw new IOException(source + ": symbolic links are not supported in item catalogs");
+        boolean directory = attributes.isDirectory();
+        if (!directory && !attributes.isRegularFile()) throw new IOException(source + ": expected an item file or directory");
+        List<Path> files = directory ? catalogFiles(source) : List.of(source);
         var result = new LinkedHashMap<String, ItemDefinition>();
+        var origins = new LinkedHashMap<String, String>();
+        for (Path file : files) {
+            String label = directory ? source.relativize(file).toString() : file.getFileName().toString();
+            try {
+                loadFile(file, result, origins, label);
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalArgumentException(label + ": " + ex.getMessage(), ex);
+            }
+        }
+        return new ItemCatalog(result);
+    }
+
+    private static List<Path> catalogFiles(Path directory) throws IOException {
+        var files = new ArrayList<Path>();
+        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                if (attributes.isSymbolicLink()) {
+                    throw new IOException(directory.relativize(file) + ": symbolic links are not supported in item catalogs");
+                }
+                String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+                if (name.endsWith(".yml") || name.endsWith(".yaml")) {
+                    if (!attributes.isRegularFile()) throw new IOException(file + ": expected a regular item file");
+                    files.add(file);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        files.sort(Comparator.comparing(file -> directory.relativize(file).toString()));
+        return files;
+    }
+
+    private static void loadFile(Path file, Map<String, ItemDefinition> result, Map<String, String> origins,
+                                 String label) throws IOException {
+        Map<String, Object> root = readYaml(file);
+        known(root, Set.of("schema-version", "items"), "catalog");
+        if (root.containsKey("schema-version")) integer(root.get("schema-version"), "schema-version", 1, 1);
+        Map<String, Object> rawItems = mapping(root.get("items"), "items");
         for (var entry : rawItems.entrySet()) {
             String id = entry.getKey();
             if (!id.matches("[a-z0-9][a-z0-9_-]{0,63}")) {
                 throw invalid("items." + id, "IDs must use 1-64 lowercase letters, digits, underscores or hyphens");
             }
+            if (origins.containsKey(id)) throw invalid("items." + id, "duplicate item ID; already defined in " + origins.get(id));
             result.put(id, definition(id, mapping(entry.getValue(), "items." + id)));
+            origins.put(id, label);
         }
-        return new ItemCatalog(result);
     }
 
     public Map<String, ItemDefinition> definitions() { return definitions; }
@@ -174,7 +223,7 @@ public final class ItemCatalog {
         options.setAllowDuplicateKeys(false);
         options.setMaxAliasesForCollections(0);
         options.setCodePointLimit(2_000_000);
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+        try (Reader reader = new InputStreamReader(Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS), StandardCharsets.UTF_8.newDecoder())) {
             return readYaml(reader, file.getFileName().toString(), options);
         }
     }

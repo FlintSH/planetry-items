@@ -3,6 +3,7 @@ package dev.flint.planetry.items;
 import com.destroystokyo.paper.profile.ProfileProperty;
 import com.google.common.collect.HashMultimap;
 import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.DataComponentType;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.bukkit.*;
@@ -19,6 +20,12 @@ import org.bukkit.persistence.PersistentDataType;
 public final class ItemService {
     private final PlanetryItems plugin;
     private final NamespacedKey identity, durability, oxygen;
+    private static final Set<DataComponentType> DEFINITION_COMPONENTS = Set.of(
+            DataComponentTypes.CUSTOM_NAME, DataComponentTypes.LORE, DataComponentTypes.MAX_STACK_SIZE,
+            DataComponentTypes.UNBREAKABLE, DataComponentTypes.ATTRIBUTE_MODIFIERS, DataComponentTypes.MAX_DAMAGE,
+            DataComponentTypes.DAMAGE, DataComponentTypes.CUSTOM_MODEL_DATA, DataComponentTypes.EQUIPPABLE,
+            DataComponentTypes.ITEM_MODEL, DataComponentTypes.PROFILE, DataComponentTypes.DYED_COLOR,
+            DataComponentTypes.TRIM, DataComponentTypes.TOOLTIP_DISPLAY);
 
     public ItemService(PlanetryItems plugin) {
         this.plugin = plugin;
@@ -104,9 +111,10 @@ public final class ItemService {
         if (def == null) return;
         var meta = stack.getItemMeta();
         Set<String> unmet = unmet(viewer, def);
-        meta.displayName(plugin.language().render(def.displayName(), Map.of(), plugin.hooks()::glyph));
+        meta.displayName(plugin.language().displayName(def, plugin.hooks()::glyph));
         meta.lore(plugin.language().lore(def, currentDurability(stack), unmet, plugin.hooks()::glyph));
-        meta.setMaxStackSize(def.maxStackSize());
+        // A deferred migration must not make an existing oversized stack invalid.
+        if (stack.getAmount() <= def.maxStackSize()) meta.setMaxStackSize(def.maxStackSize());
         // Custom durability is event-driven for every material. Suppress vanilla damage and tooltips.
         meta.setUnbreakable(true);
         meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE);
@@ -115,7 +123,7 @@ public final class ItemService {
             model.setFloats(List.of(def.customModelData().floatValue()));
             meta.setCustomModelDataComponent(model);
         }
-        if (def.equipSlot() != null && !def.equipSlot().isBlank()) {
+        if (def.equipSlot() != null && !def.equipSlot().isBlank() && stack.getAmount() == 1) {
             var equip = meta.getEquippable();
             equip.setSlot(EquipmentSlot.valueOf(def.equipSlot()));
             equip.setAllowedEntities(EntityType.PLAYER);
@@ -127,7 +135,8 @@ public final class ItemService {
         } else meta.setEquippable(null);
         // Empty explicitly suppresses vanilla/Nexo defaults. Only configured modifiers apply.
         meta.setAttributeModifiers(HashMultimap.create());
-        if (unmet.isEmpty() && (viewer == null || plugin.hooks().inventoryReady(viewer))) {
+        if (unmet.isEmpty() && (viewer == null || plugin.hooks().inventoryReady(viewer))
+                && (def.unbreakable() || def.maxDurability() == 0 || currentDurability(stack) > 0)) {
             int index = 0;
             for (var entry : def.attributes().entrySet()) {
                 var spec = entry.getValue();
@@ -151,6 +160,30 @@ public final class ItemService {
             stack.resetData(DataComponentTypes.MAX_DAMAGE);
             stack.resetData(DataComponentTypes.DAMAGE);
         }
+    }
+
+    /** Rebuild definition-owned fields, preserving player data and never repairing durability. */
+    public ItemStack migrate(ItemStack original, Player viewer) {
+        var def = definition(original);
+        if (def == null) throw new IllegalArgumentException("Unknown item " + id(original));
+        ItemStack configured = create(def.id(), viewer);
+        // Start from the instance, preserving containers, books, maps, bundles, stored enchants,
+        // third-party data and native components which are not owned by the catalog.
+        ItemStack replacement = original.withType(configured.getType());
+        for (var type : DEFINITION_COMPONENTS) replacement.unsetData(type);
+        replacement.copyDataFrom(configured, DEFINITION_COMPONENTS::contains);
+        int remaining = currentDurability(original);
+        replacement.editPersistentDataContainer(data -> {
+            data.set(identity, PersistentDataType.STRING, def.id());
+            data.set(durability, PersistentDataType.INTEGER, remaining);
+            if (def.bonuses().containsKey("planetry-oxygen"))
+                data.set(oxygen, PersistentDataType.DOUBLE, def.bonuses().get("planetry-oxygen"));
+            else data.remove(oxygen);
+        });
+        replacement.setAmount(1);
+        refresh(replacement, viewer);
+        replacement.setAmount(original.getAmount());
+        return replacement;
     }
 
     /** One successful use consumes exactly one point, independent of vanilla material damage rules. */

@@ -30,8 +30,10 @@ import org.bukkit.event.entity.*;
 import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.*;
 import org.bukkit.inventory.*;
-import org.bukkit.inventory.meta.SkullMeta;
+import org.bukkit.inventory.meta.*;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.persistence.PersistentDataContainer;
+import org.bukkit.permissions.Permission;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -73,12 +75,9 @@ public final class ItemsProbe extends JavaPlugin {
                 check(pendingProjectile != null && durability(pendingProjectile.getItemStack()) == 2,
                         "Native post-event trident carry overwrite lost custom durability");
                 passed();
-                if (integrations) disabledSync();
-                check(plugin.isEnabled(), "Plugin disabled during acceptance");
-                finished = true;
-                getLogger().info("ITEMS_PROBE_OK: " + groups + " groups; real Paper metadata/serialization/events/projectiles; controlled players; "
-                        + (integrations ? "controlled Core/AuraSkills/Nexo/readiness API fixtures" : "optional plugins absent"));
-                Bukkit.shutdown();
+                migrationInstanceData();
+                migrationCommands();
+                deniedDragRecovery();
             });
         });
         after(1200, () -> { throw new IllegalStateException("Probe timeout"); });
@@ -90,6 +89,10 @@ public final class ItemsProbe extends JavaPlugin {
         stage = "metadata and lore";
         ItemStack bare = create("bare");
         check(bare.getType() == Material.DIAMOND_SWORD && plain(bare.getItemMeta().displayName()).equals("Probe Blade"), "Display name/material differs");
+        Map<String, Integer> rarityColors = Map.of("bare", 0xaaaaaa, "tool", 0x55ff55, "described", 0x55ffff,
+                "hat", 0x9554ea, "eternal", 0xffbf00, "restricted", 0xff5555);
+        rarityColors.forEach((id, color) -> check(nameColor(create(id).getItemMeta().displayName(), -1, color),
+                "Rarity name color differs for " + id));
         var defaults = bare.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS);
         check(defaults != null && defaults.modifiers().isEmpty(), "Unconfigured vanilla sword attributes remain active");
         check(lore(bare).size() == 3 && lore(bare).get(1).isEmpty(), "Empty sections did not collapse to one blank: " + lore(bare));
@@ -134,11 +137,25 @@ public final class ItemsProbe extends JavaPlugin {
         levels(1);
         ItemStack restricted = create("restricted");
         check(unmet(restricted).size() == 2 && contains(lore(restricted), "Requires"), "Unmet requirement lore missing");
+        check(restricted.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                "Unmet requirements retained native attribute perks");
+        // Model an item restored from a different level/session with now-ineligible perks.
+        restricted.setData(DataComponentTypes.ATTRIBUTE_MODIFIERS, create("hat").getData(DataComponentTypes.ATTRIBUTE_MODIFIERS));
         player.items[0] = restricted;
+        call(guard, "reconcile", player.player);
+        restricted = player.items[0];
+        check(!empty(restricted) && restricted.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                "Held restricted item was removed or retained restored native attributes");
+        player.messages.clear();
         PlayerInteractEvent interact = new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_AIR, restricted, null, BlockFace.SELF, EquipmentSlot.HAND);
         fire(interact);
         check(interact.useItemInHand() == Event.Result.DENY, "Restricted right-click allowed");
         check(!player.messages.isEmpty(), "Denied use did not message the player");
+        String denial = player.messages.getLast();
+        check(denial.startsWith("You cannot use this item: ") && denial.endsWith("!")
+                && denial.contains("Game Level 5") && denial.contains("Mining Level 3")
+                && !denial.contains("☆") && !denial.contains("[") && !denial.contains("Requires"),
+                "Requirement denial retained decorative lore or wrong wording: " + denial);
         PrePlayerAttackEntityEvent pre = new PrePlayerAttackEntityEvent(player.player, entity(), true);
         fire(pre); check(pre.isCancelled(), "Pre-attack allowed a restricted weapon");
         EntityDamageByEntityEvent attack = new EntityDamageByEntityEvent(player.player, entity(), EntityDamageEvent.DamageCause.ENTITY_ATTACK, source(), 4);
@@ -150,8 +167,17 @@ public final class ItemsProbe extends JavaPlugin {
         ItemStack bow = create("bow");
         denied(new EntityShootBowEvent(player.player, bow, ItemStack.of(Material.ARROW), entity(), EquipmentSlot.HAND, 1f, true), "restricted bow");
         player.items[1] = restricted;
-        denied(new PlayerItemHeldEvent(player.player, 0, 1), "restricted hotbar selection");
-        denied(new PlayerSwapHandItemsEvent(player.player, restricted, ItemStack.of(Material.AIR)), "restricted hand swap");
+        PlayerItemHeldEvent held = new PlayerItemHeldEvent(player.player, 0, 1);
+        fire(held); check(!held.isCancelled(), "Restricted item cannot be selected in the hotbar");
+        PlayerSwapHandItemsEvent swap = new PlayerSwapHandItemsEvent(player.player, restricted, ItemStack.of(Material.AIR));
+        fire(swap); check(!swap.isCancelled(), "Restricted item cannot be held in the other hand");
+        player.cursor = restricted;
+        InventoryClickEvent handClick = new InventoryClickEvent(player.view, InventoryType.SlotType.QUICKBAR,
+                36, ClickType.LEFT, InventoryAction.PLACE_ALL);
+        fire(handClick); check(!handClick.isCancelled(), "Restricted inventory click into the held slot was blocked");
+        InventoryDragEvent handDrag = new InventoryDragEvent(player.view, null, restricted, false, Map.of(45, restricted));
+        fire(handDrag); check(!handDrag.isCancelled(), "Restricted inventory drag into the offhand was blocked");
+        player.cursor = null;
         check(durability(restricted) == 10 && durability(bow) == 10, "Denied action consumed durability");
         ItemStack stale = create("bare");
         stale.editMeta(meta -> meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "item_id"),
@@ -163,8 +189,12 @@ public final class ItemsProbe extends JavaPlugin {
         if (integrations) {
             levels(20); call(items, "refresh", restricted, player.player);
             check(unmet(restricted).isEmpty() && !contains(lore(restricted), "Requires"), "Met requirements stayed in lore");
+            check(!restricted.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                    "Meeting requirements did not restore configured native attributes");
             levels(1); call(items, "refresh", restricted, player.player);
             check(unmet(restricted).size() == 2 && contains(lore(restricted), "Requires"), "Level loss did not restore requirements");
+            check(restricted.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                    "Level loss did not remove native attribute perks");
         }
         player.clear();
         passed();
@@ -186,6 +216,11 @@ public final class ItemsProbe extends JavaPlugin {
         ItemStack eternal = create("eternal");
         for (int n = 0; n < 8; n++) check(!damage(eternal), "Unbreakable item broke");
         check(durability(eternal) == 3, "Unbreakable durability decreased");
+        for (String id : List.of("eternal", "eternal_tool", "food_eternal")) {
+            String text = String.join("|", lore(create(id))).toLowerCase(Locale.ROOT);
+            check(!text.contains("durability") && !text.contains("unbreakable"),
+                    "Unbreakable item retained durability/unbreakable lore: " + id + ": " + text);
+        }
         player.clear(); passed();
     }
 
@@ -387,11 +422,31 @@ public final class ItemsProbe extends JavaPlugin {
         player.messages.clear();
         command.execute(player.player, "planetryitems", new String[]{"list"});
         check(!player.messages.isEmpty() && player.inventoryCount() == 0, "Permission denial missing");
+        Object deniedCatalog = call(plugin, "catalog");
+        player.legacyAdmin = true;
+        for (String[] args : List.of(new String[]{"list"}, new String[]{"info"}, new String[]{"reload"},
+                new String[]{"give", player.name, "described"})) {
+            player.messages.clear();
+            command.execute(player.player, "pitems", args);
+            check(contains(player.messages, "permission") && !contains(player.messages, "bare")
+                    && player.inventoryCount() == 0 && call(plugin, "catalog") == deniedCatalog,
+                    "Legacy planetryitems.admin granted access to " + args[0]);
+        }
+        check(((List<?>) call(plugin, "onTabComplete", player.player, command, "pitems", new String[]{""})).isEmpty(),
+                "Legacy admin permission exposed command completions");
+        player.legacyAdmin = false;
         player.admin = true; player.messages.clear();
         command.execute(player.player, "planetryitems", new String[]{"list"});
         check(contains(player.messages, "bare"), "Admin list does not include configured item");
+        commandInfo();
         commandGrants();
-        var file = plugin.getDataFolder().toPath().resolve("items.yml");
+        var file = plugin.getDataFolder().toPath().resolve("items/imported.yml");
+        check(Files.isRegularFile(file), "Legacy items.yml was not imported into items/imported.yml");
+        var nested = plugin.getDataFolder().toPath().resolve("items/probe/deep/extra.yml");
+        Files.createDirectories(nested.getParent());
+        Files.copy(plugin.getDataFolder().toPath().resolve("nested-fixture.yml"), nested);
+        command.execute(player.player, "pitems", new String[]{"reload"});
+        check(create("nested_probe").getType() == Material.AMETHYST_SHARD, "Recursive catalog did not load nested fixture");
         String original = Files.readString(file, StandardCharsets.UTF_8);
         Object originalCatalog = call(plugin, "catalog"), originalLanguage = call(plugin, "language");
         try {
@@ -420,7 +475,52 @@ public final class ItemsProbe extends JavaPlugin {
         } finally { Files.writeString(file, original, StandardCharsets.UTF_8); }
         command.execute(player.player, "planetryitems", new String[]{"reload"});
         check(create("described").getMaxStackSize() == 16, "Valid reload did not preserve definitions");
+        String originalNested = Files.readString(nested, StandardCharsets.UTF_8);
+        originalCatalog = call(plugin, "catalog"); originalLanguage = call(plugin, "language");
+        try {
+            Files.writeString(nested, "items:\n  nested_probe:\n    material: INVALID_PROBE_MATERIAL\n", StandardCharsets.UTF_8);
+            command.execute(player.player, "pitems", new String[]{"reload"});
+            check(call(plugin, "catalog") == originalCatalog && call(plugin, "language") == originalLanguage
+                    && create("nested_probe").getType() == Material.AMETHYST_SHARD,
+                    "Malformed nested catalog did not retain the complete active catalog/language");
+            Files.writeString(nested, originalNested + "  bare:\n    material: STICK\n    max-durability: 0\n", StandardCharsets.UTF_8);
+            command.execute(player.player, "pitems", new String[]{"reload"});
+            check(call(plugin, "catalog") == originalCatalog && create("bare").getType() == Material.DIAMOND_SWORD,
+                    "Duplicate IDs across catalog files replaced the active definitions");
+            Files.writeString(nested, originalNested.replace("AMETHYST_SHARD", "EMERALD"), StandardCharsets.UTF_8);
+            command.execute(player.player, "pitems", new String[]{"reload"});
+            check(create("nested_probe").getType() == Material.EMERALD, "Valid nested file changes were not reloaded");
+        } finally {
+            Files.writeString(nested, originalNested, StandardCharsets.UTF_8);
+            command.execute(player.player, "pitems", new String[]{"reload"});
+        }
         player.admin = false; player.clear(); passed();
+    }
+
+    private void commandInfo() {
+        var command = plugin.getCommand("planetryitems");
+        for (String id : List.of("described", "restricted", "hat", "skull", "nexo")) {
+            if (id.equals("nexo") && !integrations) continue;
+            player.items[0] = create(id); player.messages.clear();
+            command.execute(player.player, "pitems", new String[]{"info"});
+            String text = String.join("\n", player.messages);
+            for (String field : List.of("name", "material", "configured-material", "lore", "model", "nexo",
+                    "base64", "rarity", "type", "amount", "stack", "unbreakable", "equip", "usable",
+                    "bonuses", "requirements", "attributes", "durability"))
+                check(text.toLowerCase(Locale.ROOT).contains(field), "Info omits field " + field + " for " + id + ": " + text);
+            check(text.contains(id), "Info does not identify the held item");
+            if (id.equals("described")) check(text.contains("812") && text.contains("First probe line")
+                    && text.contains("Second probe line") && text.contains("16"), "Info omits model, lore or stack values");
+            if (id.equals("restricted")) check(text.contains("planetry-gamelevel") && text.contains("auraskills-required-mining")
+                    && text.contains("minecraft:attack_damage") && text.contains("auraskills-additional-strength"),
+                    "Info omits configured requirements, native attributes or bonuses");
+            if (id.equals("hat")) check(text.contains("planetry-oxygen") && text.contains("minecraft:scale"),
+                    "Info omits oxygen or registry attributes");
+            if (id.equals("skull")) check(text.contains((String) call(definition(player.items[0]), "base64")),
+                    "Info omits the actual base64 texture value");
+            if (id.equals("nexo")) check(text.contains("probe_texture"), "Info omits the Nexo ID");
+        }
+        player.clear();
     }
 
     private void commandGrants() throws Exception {
@@ -465,6 +565,471 @@ public final class ItemsProbe extends JavaPlugin {
         } finally { field.set(null, actual); }
     }
 
+    private void migrationCommands() {
+        stage = "public migration, retained counts and two-hour cooldown";
+        var command = plugin.getCommand("migrate");
+        check(command != null && (command.getPermission() == null || command.getPermission().isBlank()),
+                "Public /migrate is missing or requires a permission");
+        player.admin = false; player.legacyAdmin = false; player.clear();
+        var cooldown = new NamespacedKey(plugin, "last_migrate");
+        player.data.remove(cooldown);
+        if (integrations) {
+            player.items[0] = outdated("tool");
+            player.items[1] = deleted("Retired Before Readiness");
+            ItemStack[] before = snapshot();
+            setField("NetworkInventorySync", "ready", false);
+            command.execute(player.player, "migrate", new String[0]);
+            check(Arrays.equals(before, player.items) && !player.data.has(cooldown, PersistentDataType.LONG),
+                    "Unready public migration mutated items or spent the cooldown");
+            setField("NetworkInventorySync", "ready", true);
+        }
+        player.clear(); player.messages.clear();
+        player.items[0] = outdated("tool");
+        player.items[0].setType(Material.STICK);
+        player.items[0].editMeta(meta -> meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "durability"),
+                PersistentDataType.INTEGER, 1));
+        player.items[1] = legacyStack("described", 17, 32);
+        ItemStack ordinary = ItemStack.of(Material.APPLE, 7); player.items[2] = ordinary.clone();
+        player.items[3] = deleted("Retired Probe Item");
+        player.cursor = outdated("described"); player.cursor.setAmount(2);
+        command.execute(player.player, "migrate", new String[0]);
+        check(player.items[0].getType() == Material.PAPER && durability(player.items[0]) == 1
+                && !plain(player.items[0].getItemMeta().displayName()).contains("OUTDATED"),
+                "Public migration did not rebuild the current material/name while preserving remaining durability");
+        check(player.count("described") == 17 && Arrays.stream(player.items).filter(item -> !empty(item))
+                .allMatch(item -> item.getAmount() <= item.getMaxStackSize()),
+                "Migration lost items or failed to split the updated stack limit");
+        check(ordinary.equals(player.items[2]), "Migration changed an ordinary item");
+        check(player.count("removed_probe_definition") == 0 && contains(player.messages, "Retired Probe Item")
+                && contains(player.messages.stream().map(value -> value.toLowerCase(Locale.ROOT)).toList(), "contact staff"),
+                "Deleted item was not removed with its name and contact-staff notice: " + player.messages);
+        check(player.cursor != null && player.cursor.getAmount() == 2
+                && !plain(player.cursor.getItemMeta().displayName()).contains("OUTDATED"), "Managed cursor was not migrated");
+        Long first = player.data.get(cooldown, PersistentDataType.LONG);
+        check(first != null && first > 0, "Successful public migration did not persist its cooldown");
+        player.items[0] = outdated("tool");
+        ItemStack denied = player.items[0].clone(); player.messages.clear();
+        command.execute(player.player, "migrate", new String[0]);
+        check(denied.equals(player.items[0]) && first.equals(player.data.get(cooldown, PersistentDataType.LONG))
+                && contains(player.messages, "2h"), "Immediate migration did not retain items and report the two-hour cooldown");
+        long expired = System.currentTimeMillis() - 7_200_001L;
+        player.data.set(cooldown, PersistentDataType.LONG, expired);
+        command.execute(player.player, "migrate", new String[0]);
+        check(!plain(player.items[0].getItemMeta().displayName()).contains("OUTDATED")
+                && player.data.get(cooldown, PersistentDataType.LONG) > expired, "Migration stayed blocked after two hours");
+        player.clear(); player.data.remove(cooldown);
+        command.execute(player.player, "migrate", new String[0]);
+        check(player.data.has(cooldown, PersistentDataType.LONG), "Successful empty migration did not consume cooldown");
+
+        // A new lower stack limit must never discard overflow when storage is full.
+        player.clear(); player.data.remove(cooldown);
+        for (int slot = 0; slot < 36; slot++) player.items[slot] = ItemStack.of(Material.COBBLESTONE, 64);
+        player.items[0] = legacyStack("described", 17, 32);
+        check(player.items[0].getMaxStackSize() >= player.items[0].getAmount(),
+                "Legacy full-storage fixture starts with an invalid stack");
+        command.execute(player.player, "migrate", new String[0]);
+        check(player.count("described") == 17 && !player.data.has(cooldown, PersistentDataType.LONG)
+                && player.inventoryCount() == 35 * 64 + 17, "Full storage lost migration overflow or spent the cooldown");
+        check(player.items[0].getAmount() == 17 && player.items[0].getMaxStackSize() >= 17,
+                "Blocked migration lowered the retained stack's maximum below its amount");
+        call(guard, "reconcile", player.player);
+        check(player.items[0].getAmount() == 17 && player.items[0].getMaxStackSize() >= 17
+                && player.inventoryCount() == 35 * 64 + 17,
+                "Reconciliation made a blocked legacy stack invalid or lost its overflow");
+        player.items[35] = null;
+        command.execute(player.player, "migrate", new String[0]);
+        check(player.count("described") == 17 && player.data.has(cooldown, PersistentDataType.LONG)
+                && Arrays.stream(player.items).filter(item -> !empty(item))
+                .allMatch(item -> item.getAmount() <= item.getMaxStackSize()), "Migration did not recover after storage was freed");
+        // Bukkit may mutate an addItem argument while partly merging it into an existing stack.
+        player.clear(); player.data.remove(cooldown);
+        player.items[0] = legacyStack("described", 32, 32);
+        player.items[1] = create("described"); player.items[1].setAmount(15);
+        check(((ItemStack) call(items, "migrate", player.items[0], player.player)).isSimilar(player.items[1]),
+                "Partial-merge fixture does not match the rebuilt item definition");
+        command.execute(player.player, "migrate", new String[0]);
+        check(player.count("described") == 47 && player.inventoryCount() == 47
+                && player.data.has(cooldown, PersistentDataType.LONG)
+                && Arrays.stream(player.items).filter(item -> !empty(item))
+                .allMatch(item -> item.getAmount() <= 16 && item.getAmount() <= item.getMaxStackSize()),
+                "Migration partial merge duplicated/lost items or exceeded the new stack limit");
+        player.data.remove(cooldown);
+        player.clear(); passed();
+    }
+
+    private ItemStack legacyStack(String id, int amount, int maximum) {
+        ItemStack item = outdated(id);
+        item.editMeta(meta -> meta.setMaxStackSize(maximum));
+        item.setAmount(amount);
+        return item;
+    }
+
+    private void migrationInstanceData() throws Exception {
+        stage = "service and public migration preserve containers, bundles, books and foreign PDC";
+        var state = plugin.getDataFolder().toPath().resolve("items/probe/state.yml");
+        check(!Files.exists(state), "Unexpected existing instance-data fixture catalog");
+        Files.createDirectories(state.getParent());
+        Files.writeString(state, """
+                items:
+                  state_shulker:
+                    material: SHULKER_BOX
+                    max-stack-size: 1
+                    max-durability: 0
+                  state_bundle:
+                    material: BUNDLE
+                    max-stack-size: 1
+                    max-durability: 0
+                  state_written:
+                    material: WRITTEN_BOOK
+                    max-stack-size: 1
+                    max-durability: 0
+                  state_enchants:
+                    material: ENCHANTED_BOOK
+                    max-stack-size: 1
+                    max-durability: 0
+                """, StandardCharsets.UTF_8);
+        var reload = plugin.getCommand("planetryitems");
+        var cooldown = new NamespacedKey(plugin, "last_migrate");
+        try {
+            player.admin = true;
+            reload.execute(player.player, "pitems", new String[]{"reload"});
+            player.admin = false; player.clear(); player.data.remove(cooldown);
+            List<String> ids = List.of("state_shulker", "state_bundle", "state_written", "state_enchants");
+            for (int slot = 0; slot < ids.size(); slot++) {
+                String id = ids.get(slot);
+                ItemStack original = instanceData(id), before = original.clone();
+                ItemStack migrated = (ItemStack) call(items, "migrate", original, player.player);
+                check(original.equals(before), "Service migration mutated its input: " + id);
+                assertInstanceData(migrated, id);
+                assertInstanceData(ItemStack.deserializeBytes(migrated.serializeAsBytes()), id);
+                player.items[slot] = original;
+            }
+            player.cursor = instanceData("state_bundle");
+            plugin.getCommand("migrate").execute(player.player, "migrate", new String[0]);
+            check(player.data.has(cooldown, PersistentDataType.LONG), "Instance-data public migration failed");
+            for (int slot = 0; slot < ids.size(); slot++) {
+                assertInstanceData(player.items[slot], ids.get(slot));
+                assertInstanceData(ItemStack.deserializeBytes(player.items[slot].serializeAsBytes()), ids.get(slot));
+            }
+            assertInstanceData(player.cursor, "state_bundle");
+            passed();
+        } finally {
+            player.clear(); player.data.remove(cooldown);
+            Files.deleteIfExists(state);
+            player.admin = true;
+            reload.execute(player.player, "pitems", new String[]{"reload"});
+            player.admin = false;
+        }
+    }
+
+    private ItemStack instanceData(String id) {
+        ItemStack item = outdated(id);
+        switch (id) {
+            case "state_shulker" -> {
+                // A catalog material change must also preserve the block-entity inventory.
+                item = item.withType(Material.WHITE_SHULKER_BOX);
+                BlockStateMeta meta = (BlockStateMeta) item.getItemMeta();
+                var box = (org.bukkit.block.ShulkerBox) meta.getBlockState();
+                box.getInventory().setItem(0, ItemStack.of(Material.DIAMOND, 23));
+                meta.setBlockState(box); item.setItemMeta(meta);
+            }
+            case "state_bundle" -> {
+                BundleMeta meta = (BundleMeta) item.getItemMeta();
+                meta.setItems(List.of(ItemStack.of(Material.DIAMOND, 7), ItemStack.of(Material.EMERALD, 3)));
+                item.setItemMeta(meta);
+            }
+            case "state_written" -> {
+                BookMeta meta = (BookMeta) item.getItemMeta();
+                meta.setTitle("Instance Journal"); meta.setAuthor("Probe Author");
+                meta.setPages("First saved page\nDiamonds: 23", "Second saved page");
+                item.setItemMeta(meta);
+            }
+            case "state_enchants" -> {
+                EnchantmentStorageMeta meta = (EnchantmentStorageMeta) item.getItemMeta();
+                meta.addStoredEnchant(Enchantment.MENDING, 1, false);
+                meta.addStoredEnchant(Enchantment.UNBREAKING, 3, false);
+                item.setItemMeta(meta);
+            }
+            default -> throw new IllegalArgumentException(id);
+        }
+        item.editMeta(meta -> {
+            meta.getPersistentDataContainer().set(new NamespacedKey("probe_foreign", "instance"),
+                    PersistentDataType.STRING, "saved:" + id);
+            var model = meta.getCustomModelDataComponent();
+            model.setFloats(List.of(456f)); meta.setCustomModelDataComponent(model);
+        });
+        return item;
+    }
+
+    private void assertInstanceData(ItemStack item, String id) {
+        check(!empty(item) && id.equals(call(items, "id", item)) && item.getAmount() == 1,
+                "Migration lost managed identity/count: " + id);
+        check(("saved:" + id).equals(item.getItemMeta().getPersistentDataContainer().get(
+                new NamespacedKey("probe_foreign", "instance"), PersistentDataType.STRING)),
+                "Migration lost foreign instance PDC: " + id);
+        check(!plain(item.getItemMeta().displayName()).contains("OUTDATED")
+                && item.getData(DataComponentTypes.CUSTOM_MODEL_DATA) == null,
+                "Migration retained stale catalog name/model components: " + id);
+        switch (id) {
+            case "state_shulker" -> {
+                check(item.getType() == Material.SHULKER_BOX, "Migration did not apply the current shulker material");
+                var box = (org.bukkit.block.ShulkerBox) ((BlockStateMeta) item.getItemMeta()).getBlockState();
+                check(ItemStack.of(Material.DIAMOND, 23).equals(box.getInventory().getItem(0)),
+                        "Migration lost the shulker's diamonds");
+            }
+            case "state_bundle" -> check(((BundleMeta) item.getItemMeta()).getItems().equals(
+                    List.of(ItemStack.of(Material.DIAMOND, 7), ItemStack.of(Material.EMERALD, 3))),
+                    "Migration lost bundle contents");
+            case "state_written" -> {
+                BookMeta meta = (BookMeta) item.getItemMeta();
+                check("Instance Journal".equals(meta.getTitle()) && "Probe Author".equals(meta.getAuthor())
+                        && meta.getPages().equals(List.of("First saved page\nDiamonds: 23", "Second saved page")),
+                        "Migration lost written book title, author or pages");
+            }
+            case "state_enchants" -> check(((EnchantmentStorageMeta) item.getItemMeta()).getStoredEnchants().equals(
+                    Map.of(Enchantment.MENDING, 1, Enchantment.UNBREAKING, 3)),
+                    "Migration lost stored enchanted-book enchantments");
+            default -> throw new IllegalArgumentException(id);
+        }
+    }
+
+    private void deniedDragRecovery() {
+        stage = "stale denied drag cancels, repairs the restored cursor and permits a clean retry";
+        player.clear(); levels(20);
+        ItemStack stale = create("restricted_hand");
+        if (!integrations) {
+            // Model native perks persisted by an earlier eligible server/session.
+            stale.setData(DataComponentTypes.ATTRIBUTE_MODIFIERS, create("hat").getData(DataComponentTypes.ATTRIBUTE_MODIFIERS));
+        }
+        check(!stale.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                "Stale drag fixture has no formerly eligible native attributes");
+        levels(1); player.cursor = stale.clone();
+        InventoryDragEvent drag = new InventoryDragEvent(player.view, null, stale, false, Map.of(45, stale.asOne()));
+        fire(drag);
+        check(drag.isCancelled(), "Drag carrying stale denied native perks was not cancelled immediately");
+        // Native drag cancellation restores the old cursor after event dispatch. The event's
+        // new-item map contains copies and cannot prove which stacks Paper will install.
+        player.cursor = stale.clone();
+        after(2, () -> {
+            check(!empty(player.cursor) && player.cursor.getAmount() == 1
+                    && player.cursor.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                    "Cancelled drag did not repair native perks on the actual restored cursor");
+            ItemStack clean = player.cursor.clone();
+            InventoryDragEvent retry = new InventoryDragEvent(player.view, null, clean, false, Map.of(45, clean.asOne()));
+            fire(retry);
+            check(!retry.isCancelled(), "Sanitized restricted item cannot be dragged into the offhand");
+            player.clear(); passed(); automaticMigration();
+        });
+    }
+
+    private void automaticMigration() {
+        stage = "automatic join migration waits for Inventory Sync readiness";
+        player.clear(); player.messages.clear();
+        player.items[0] = outdated("tool"); player.items[1] = deleted("Retired Join Item");
+        ItemStack[] before = snapshot();
+        if (integrations) setField("NetworkInventorySync", "ready", false);
+        fire(new PlayerJoinEvent(player.player, Component.empty()));
+        after(5, () -> {
+            if (integrations) {
+                check(Arrays.equals(before, player.items), "Join changed inventory before Inventory Sync readiness");
+                setField("NetworkInventorySync", "ready", true);
+            }
+            after(30, () -> {
+                check(!plain(player.items[0].getItemMeta().displayName()).contains("OUTDATED")
+                        && player.count("removed_probe_definition") == 0 && contains(player.messages, "Retired Join Item"),
+                        "Join did not automatically refresh/remove items after readiness");
+                int notices = (int) player.messages.stream().filter(message -> message.contains("Retired Join Item")).count();
+                call(guard, "reconcile", player.player);
+                check(notices == 1 && player.messages.stream().filter(message -> message.contains("Retired Join Item")).count() == 1,
+                        "Deleted item removal notice was repeated");
+                passed();
+                // A backend switch reaches the target server through another join lifecycle.
+                fire(new PlayerQuitEvent(player.player, Component.empty(), PlayerQuitEvent.QuitReason.DISCONNECTED));
+                player.clear(); player.messages.clear();
+                player.items[0] = outdated("described"); player.items[1] = deleted("Retired Switch Item");
+                ItemStack[] switched = snapshot();
+                if (integrations) setField("NetworkInventorySync", "ready", false);
+                stage = "automatic migration on the next server session";
+                fire(new PlayerJoinEvent(player.player, Component.empty()));
+                after(5, () -> {
+                    if (integrations) {
+                        check(Arrays.equals(switched, player.items), "Server switch changed inventory before readiness");
+                        setField("NetworkInventorySync", "ready", true);
+                    }
+                    after(30, () -> {
+                        check(!plain(player.items[0].getItemMeta().displayName()).contains("OUTDATED")
+                                && player.count("removed_probe_definition") == 0 && contains(player.messages, "Retired Switch Item"),
+                                "Next server session did not migrate despite the public cooldown");
+                        passed(); rapidReconnect();
+                    });
+                });
+            });
+        });
+    }
+
+    private void rapidReconnect() throws Exception {
+        stage = "rapid reconnect fences an old online Player and retains the new session migration";
+        Fake old = new Fake("ReconnectProbe", false);
+        old.items[0] = outdated("tool"); old.items[0].setType(Material.STICK);
+        ItemStack[] original = snapshot(old);
+        if (integrations) setField("NetworkInventorySync", "ready", false);
+        fire(new PlayerJoinEvent(old.player, Component.empty()));
+        Checked reconnect = () -> {
+            check(old.player.isOnline(), "Reconnect fixture must model an old UUID-backed online Player");
+            fire(new PlayerQuitEvent(old.player, Component.empty(), PlayerQuitEvent.QuitReason.DISCONNECTED));
+            Fake current = new Fake(old.id, old.name, false);
+            check(current.player != old.player && current.player.getUniqueId().equals(old.player.getUniqueId()),
+                    "Reconnect fixture did not create distinct Player instances with the same UUID");
+            current.items[0] = outdated("tool"); current.items[0].setType(Material.STICK);
+            fire(new PlayerJoinEvent(current.player, Component.empty()));
+            if (integrations) {
+                // Old task retries at tick 21; the new session's first ready retry is tick 26.
+                after(15, () -> {
+                    setField("NetworkInventorySync", "ready", true);
+                    after(4, () -> {
+                        check(Arrays.equals(original, old.items), "Old delayed task mutated a superseded inventory");
+                        check(current.items[0].getType() == Material.STICK && pendingMigration(current),
+                                "Old delayed task consumed or prematurely ran the new pending migration");
+                        // A late event from the superseded Player must not clear the new record either.
+                        fire(new PlayerQuitEvent(old.player, Component.empty(), PlayerQuitEvent.QuitReason.DISCONNECTED));
+                        check(pendingMigration(current), "Late old-session quit cleared the current pending migration");
+                        after(8, () -> finishReconnect(old, original, current));
+                    });
+                });
+            } else {
+                // Both next-tick tasks are queued; the old task must yield to the new session.
+                after(2, () -> finishReconnect(old, original, current));
+            }
+        };
+        if (integrations) after(5, reconnect);
+        else reconnect.run();
+    }
+
+    private void finishReconnect(Fake old, ItemStack[] original, Fake current) {
+        check(Arrays.equals(original, old.items) && old.player.isOnline(),
+                "Superseded Player inventory changed while the UUID still reports online");
+        check(current.items[0].getType() == Material.PAPER && !pendingMigration(current),
+                "New same-UUID session did not finish its own migration");
+        fire(new PlayerQuitEvent(current.player, Component.empty(), PlayerQuitEvent.QuitReason.DISCONNECTED));
+        passed();
+        if (integrations) retryMissingSource();
+        else finish();
+    }
+
+    private void retryMissingSource() {
+        stage = "first-ready missing Nexo source retries automatically after five seconds";
+        Fake retry = new Fake("RetryProbe", false);
+        retry.items[0] = outdated("nexo"); retry.items[0].setType(Material.STICK);
+        ItemStack[] original = snapshot(retry);
+        setField("Nexo", "available", false);
+        setField("NetworkInventorySync", "ready", false);
+        fire(new PlayerJoinEvent(retry.player, Component.empty()));
+        after(5, () -> {
+            check(Arrays.equals(original, retry.items), "Missing-source join mutated inventory before readiness");
+            long readyAt = System.currentTimeMillis();
+            setField("NetworkInventorySync", "ready", true);
+            awaitFirstSourceFailure(retry, readyAt, 60);
+        });
+    }
+
+    private void awaitFirstSourceFailure(Fake retry, long readyAt, int remaining) {
+        after(1, () -> {
+            long retryAt = nextMigrationAt(retry);
+            if (retryAt == 0) {
+                check(remaining > 0, "First ready migration never attempted the unavailable Nexo source");
+                awaitFirstSourceFailure(retry, readyAt, remaining - 1);
+                return;
+            }
+            check(retry.items[0].getType() == Material.STICK && pendingMigration(retry)
+                    && sourceFailures(retry) == 1 && !retry.data.has(new NamespacedKey(plugin, "last_migrate")),
+                    "Failed first-ready migration lost the original, retry, notice or public cooldown separation");
+            check(retryAt >= readyAt + 5_000,
+                    "Failed migration did not schedule a five-second backoff");
+            setField("Nexo", "available", true);
+            if (System.currentTimeMillis() < retryAt) {
+                call(guard, "reconcile", retry.player);
+                check(retry.items[0].getType() == Material.STICK && pendingMigration(retry)
+                        && nextMigrationAt(retry) == retryAt && sourceFailures(retry) == 1,
+                        "Migration ignored its backoff or repeated the failure notice");
+            }
+            awaitSourceRecovery(retry, retryAt, System.currentTimeMillis() + 12_000, 240);
+        });
+    }
+
+    private void awaitSourceRecovery(Fake retry, long retryAt, long deadline, int remaining) {
+        after(10, () -> {
+            if (retry.items[0].getType() == Material.AMETHYST_SHARD) {
+                check(System.currentTimeMillis() >= retryAt && !pendingMigration(retry)
+                        && nextMigrationAt(retry) == 0 && sourceFailures(retry) == 1,
+                        "Recovered source retried early, retained pending state or repeated its notice");
+                check(retry.items[0].getData(DataComponentTypes.ITEM_MODEL).asString().equals("nexo:probe_texture")
+                        && !retry.data.has(new NamespacedKey(plugin, "last_migrate")),
+                        "Automatic Nexo retry omitted source appearance or spent the public cooldown");
+                fire(new PlayerQuitEvent(retry.player, Component.empty(), PlayerQuitEvent.QuitReason.DISCONNECTED));
+                passed(); finish();
+                return;
+            }
+            check(retry.items[0].getType() == Material.STICK && pendingMigration(retry) && sourceFailures(retry) == 1,
+                    "Waiting retry lost its original item, pending state or single failure notice");
+            check(System.currentTimeMillis() < deadline && remaining > 0,
+                    "Ready migration did not recover automatically after the Nexo source returned");
+            awaitSourceRecovery(retry, retryAt, deadline, remaining - 10);
+        });
+    }
+
+    private int sourceFailures(Fake target) {
+        return (int) target.messages.stream().filter(message -> message.contains("could not update")).count();
+    }
+
+    private boolean pendingMigration(Fake target) {
+        return ((Set<?>) guardField("pendingMigration")).contains(target.id);
+    }
+
+    private long nextMigrationAt(Fake target) {
+        Object next = ((Map<?, ?>) guardField("nextMigration")).get(target.id);
+        return next == null ? 0 : ((Number) next).longValue();
+    }
+
+    private Object guardField(String name) {
+        try {
+            Field field = guard.getClass().getDeclaredField(name);
+            field.setAccessible(true);
+            return field.get(guard);
+        } catch (ReflectiveOperationException error) { throw new IllegalStateException(error); }
+    }
+
+    private ItemStack outdated(String id) {
+        ItemStack item = create(id);
+        item.editMeta(meta -> { meta.displayName(Component.text("OUTDATED " + id)); meta.lore(List.of(Component.text("OUTDATED lore"))); });
+        return item;
+    }
+
+    private ItemStack deleted(String name) {
+        ItemStack item = create("bare");
+        item.editMeta(meta -> {
+            meta.displayName(Component.text(name));
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "item_id"), PersistentDataType.STRING, "removed_probe_definition");
+        });
+        return item;
+    }
+
+    private ItemStack[] snapshot() {
+        return snapshot(player);
+    }
+
+    private ItemStack[] snapshot(Fake target) {
+        return Arrays.stream(target.items).map(item -> item == null ? null : item.clone()).toArray(ItemStack[]::new);
+    }
+
+    private void finish() {
+        if (integrations) disabledSync();
+        check(plugin.isEnabled(), "Plugin disabled during acceptance");
+        finished = true;
+        getLogger().info("ITEMS_PROBE_OK: " + groups + " groups; real Paper metadata/serialization/events/projectiles/migration; controlled players; "
+                + (integrations ? "controlled Core/AuraSkills/Nexo/readiness API fixtures" : "optional plugins absent"));
+        Bukkit.shutdown();
+    }
+
     private void integrationChecks() throws Exception {
         stage = "Nexo items and glyphs";
         ItemStack nexo = create("nexo");
@@ -507,6 +1072,17 @@ public final class ItemsProbe extends JavaPlugin {
         fire(new PlayerQuitEvent(player.player, Component.empty(), PlayerQuitEvent.QuitReason.DISCONNECTED));
         check(modifiers().isEmpty(), "Quit retained modifiers");
         player.clear(); passed();
+
+        stage = "held requirement loss disables native and AuraSkills perks";
+        levels(20); player.items[0] = create("restricted_hand"); call(guard, "reconcile", player.player);
+        check(modifiers().size() == 1 && modifiers().containsKey("planetryitems:strength")
+                && !player.items[0].getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                "Eligible held item did not grant its configured native/AuraSkills perks");
+        levels(1); call(guard, "reconcile", player.player);
+        check(player.count("restricted_hand") == 1 && !empty(player.items[0]) && modifiers().isEmpty()
+                && player.items[0].getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                "Requirement loss removed the held item or retained native/AuraSkills perks");
+        player.clear(); call(guard, "reconcile", player.player); passed();
 
     }
 
@@ -567,6 +1143,12 @@ public final class ItemsProbe extends JavaPlugin {
     private static String plain(Component value) { return value == null ? "" : PlainTextComponentSerializer.plainText().serialize(value); }
     private static boolean contains(List<String> values, String needle) { return values.stream().anyMatch(value -> value.contains(needle)); }
     private static boolean red(Component component) { return NamedTextColor.RED.equals(component.color()) || component.children().stream().anyMatch(ItemsProbe::red); }
+    private static boolean nameColor(Component component, int inherited, int expected) {
+        int color = component.color() == null ? inherited : component.color().value();
+        if (component instanceof net.kyori.adventure.text.TextComponent text && !text.content().isEmpty()
+                && color != expected) return false;
+        return component.children().stream().allMatch(child -> nameColor(child, color, expected));
+    }
     private static boolean empty(ItemStack item) { return item == null || item.getType().isAir() || item.getAmount() == 0; }
     private static DamageSource source() { return DamageSource.builder(DamageType.GENERIC).build(); }
     private void fire(Event event) { Bukkit.getPluginManager().callEvent(event); }
@@ -586,12 +1168,16 @@ public final class ItemsProbe extends JavaPlugin {
     private static Object zero(Class<?> type) { if (!type.isPrimitive()) return null; if (type == boolean.class) return false; if (type == int.class) return 0; if (type == long.class) return 0L; if (type == double.class) return 0d; if (type == float.class) return 0f; if (type == byte.class) return (byte) 0; if (type == short.class) return (short) 0; if (type == char.class) return (char) 0; return null; }
 
     private final class Fake {
-        final UUID id = UUID.randomUUID(); final String name;
+        final UUID id; final String name;
         final ItemStack[] items = new ItemStack[43]; final List<String> messages = new ArrayList<>();
+        final PersistentDataContainer data = new ItemStack(Material.PAPER).getItemMeta().getPersistentDataContainer();
         Player player; PlayerInventory inventory; InventoryView view; Inventory top;
-        ItemStack cursor; boolean admin, blocking, gliding; int breaks, sounds;
+        ItemStack cursor; boolean admin, legacyAdmin, blocking, gliding; int breaks, sounds;
         Fake(String name, boolean admin) {
-            this.name = name; this.admin = admin;
+            this(UUID.randomUUID(), name, admin);
+        }
+        Fake(UUID id, String name, boolean admin) {
+            this.id = id; this.name = name; this.admin = admin;
             inventory = proxy(PlayerInventory.class, (object, method, args) -> {
                 check(Bukkit.isPrimaryThread(), "Inventory accessed off main thread");
                 return switch (method.getName()) {
@@ -621,7 +1207,9 @@ public final class ItemsProbe extends JavaPlugin {
                 case "getUniqueId" -> id; case "getName", "getDisplayName" -> name; case "name", "displayName" -> Component.text(name);
                 case "getServer" -> Bukkit.getServer(); case "getPlayer" -> object;
                 case "isOnline", "isValid", "hasPlayedBefore", "isConnected" -> true;
-                case "isDead", "isSneaking" -> false; case "hasPermission", "isPermissionSet", "isOp" -> this.admin;
+                case "isDead", "isSneaking", "isOp" -> false;
+                case "hasPermission", "isPermissionSet" -> permission(args[0]);
+                case "getPersistentDataContainer" -> data;
                 case "isBlocking" -> blocking;
                 case "isGliding" -> gliding;
                 case "setGliding" -> { gliding = (boolean) args[0]; yield null; }
@@ -654,6 +1242,10 @@ public final class ItemsProbe extends JavaPlugin {
             });
         }
         int index(Object value) { if (value instanceof Integer slot) return slot; return switch ((EquipmentSlot) value) { case HAND -> 0; case OFF_HAND -> 40; case FEET -> 36; case LEGS -> 37; case CHEST -> 38; case HEAD -> 39; case BODY -> 41; case SADDLE -> 42; }; }
+        boolean permission(Object value) {
+            String name = value instanceof Permission permission ? permission.getName() : String.valueOf(value);
+            return name.equals("planetry.admin.items") ? admin : name.equals("planetryitems.admin") && legacyAdmin;
+        }
         int convert(int raw) { if (raw < 5) return raw; if (raw < 9) return 44 - raw; if (raw < 36) return raw; if (raw < 45) return raw - 36; return 40; }
         InventoryType.SlotType slotType(int raw) { return raw < 0 ? InventoryType.SlotType.OUTSIDE : raw == 0 ? InventoryType.SlotType.RESULT : raw < 5 ? InventoryType.SlotType.CRAFTING : raw < 9 ? InventoryType.SlotType.ARMOR : raw < 36 ? InventoryType.SlotType.CONTAINER : InventoryType.SlotType.QUICKBAR; }
         ItemStack hand(int slot) { return items[slot] == null ? ItemStack.of(Material.AIR) : items[slot]; }

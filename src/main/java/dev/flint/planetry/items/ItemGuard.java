@@ -24,6 +24,11 @@ public final class ItemGuard implements Listener {
     private final Map<UUID, Long> lastMessage = new HashMap<>();
     private final Map<UUID, EntityUse> entityUses = new HashMap<>();
     private final Set<UUID> queued = new HashSet<>();
+    private final Set<UUID> pendingMigration = new HashSet<>();
+    private final Map<UUID, Long> nextMigration = new HashMap<>();
+    private final Set<String> migrationWarnings = new HashSet<>();
+    private record Session(Player player) { }
+    private final Map<UUID, Session> sessions = new HashMap<>();
     private static final List<EquipmentSlot> SLOTS = List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND,
             EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET);
     private static final Set<Material> PROJECTILE_ITEMS = Set.of(Material.BOW, Material.CROSSBOW, Material.TRIDENT,
@@ -41,11 +46,8 @@ public final class ItemGuard implements Listener {
             var def = items().definition(stack);
             Set<String> unmet = def == null ? Set.of() : items().unmet(player, def);
             if (!unmet.isEmpty()) {
-                var descriptions = new ArrayList<String>();
-                for (String key : unmet) descriptions.add(PlainTextComponentSerializer.plainText().serialize(
-                        plugin.language().text("requirements." + key,
-                                Map.of("value", Integer.toString(def.requirements().get(key))), plugin.hooks()::glyph)));
-                plugin.message(player, "messages.requirements-not-met", Map.of("requirements", String.join(", ", descriptions), "item", def.id()));
+                plugin.message(player, "messages.requirements-not-met", Map.of("requirements",
+                        plugin.language().requirementSummary(def, unmet, plugin.hooks()::glyph), "item", def.id()));
             } else plugin.message(player, !plugin.hooks().inventoryReady(player)
                     ? "messages.integration-unavailable" : "messages.disabled-item", Map.of());
             lastMessage.put(player.getUniqueId(), now);
@@ -289,20 +291,21 @@ public final class ItemGuard implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void equipmentSwap(PlayerSwapWithEquipmentSlotEvent e) {
-        if (deny(e.getPlayer(), e.getItemInHand())) e.setCancelled(true);
+        if (e.getSlot() != EquipmentSlot.OFF_HAND && deny(e.getPlayer(), e.getItemInHand())) e.setCancelled(true);
         else later(e.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void held(PlayerItemHeldEvent e) {
-        if (deny(e.getPlayer(), e.getPlayer().getInventory().getItem(e.getNewSlot()))) e.setCancelled(true);
-        else later(e.getPlayer());
+        refreshHeld(e.getPlayer(), e.getPlayer().getInventory().getItem(e.getNewSlot()));
+        later(e.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void swap(PlayerSwapHandItemsEvent e) {
-        if (deny(e.getPlayer(), e.getMainHandItem()) || deny(e.getPlayer(), e.getOffHandItem())) e.setCancelled(true);
-        else later(e.getPlayer());
+        refreshHeld(e.getPlayer(), e.getMainHandItem());
+        refreshHeld(e.getPlayer(), e.getOffHandItem());
+        later(e.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -316,8 +319,7 @@ public final class ItemGuard implements Listener {
         ItemStack incoming = e.getCursor();
         if (e.getClick() == ClickType.NUMBER_KEY && e.getHotbarButton() >= 0) incoming = p.getInventory().getItem(e.getHotbarButton());
         if (e.getClick() == ClickType.SWAP_OFFHAND) incoming = p.getInventory().getItemInOffHand();
-        boolean equipmentDestination = e.getSlotType() == InventoryType.SlotType.ARMOR ||
-                (e.getClickedInventory() == p.getInventory() && (e.getSlot() == 40 || e.getSlot() == p.getInventory().getHeldItemSlot()));
+        boolean equipmentDestination = e.getSlotType() == InventoryType.SlotType.ARMOR;
         var shifted = items().definition(e.getCurrentItem());
         if ((equipmentDestination && deny(p, incoming)) ||
                 (e.isShiftClick() && e.getClickedInventory() == p.getInventory() && shifted != null
@@ -342,42 +344,105 @@ public final class ItemGuard implements Listener {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         for (int raw : e.getRawSlots()) {
             int slot = e.getView().convertSlot(raw);
-            if (e.getView().getSlotType(raw) == InventoryType.SlotType.ARMOR ||
-                    (e.getView().getInventory(raw) == p.getInventory() && (slot == 40 || slot == p.getInventory().getHeldItemSlot()))) {
+            if (e.getView().getSlotType(raw) == InventoryType.SlotType.ARMOR) {
                 if (deny(p, e.getOldCursor())) { e.setCancelled(true); return; }
             }
+        }
+        ItemStack oldCursor = e.getOldCursor();
+        var attributes = oldCursor.getData(io.papermc.paper.datacomponent.DataComponentTypes.ATTRIBUTE_MODIFIERS);
+        if (items().id(oldCursor) != null && !items().usable(p, oldCursor)
+                && attributes != null && !attributes.modifiers().isEmpty()) {
+            // Paper installs private pre-event copies, not getNewItems(). Refuse this stale
+            // transfer, repair the restored cursor, then an ordinary retry can hold the item.
+            e.setCancelled(true);
+            Session session = sessions.computeIfAbsent(p.getUniqueId(), id -> new Session(p));
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (sessions.get(p.getUniqueId()) != session || session.player() != p
+                        || !p.isOnline() || !plugin.hooks().inventoryReady(p)) return;
+                ItemStack current = p.getItemOnCursor();
+                if (!oldCursor.equals(current)) return;
+                refreshHeld(p, current); p.setItemOnCursor(current);
+            });
+            return;
         }
         later(p);
     }
 
-    @EventHandler(priority = EventPriority.MONITOR) public void join(PlayerJoinEvent e) { later(e.getPlayer()); }
+    private void refreshHeld(Player player, ItemStack stack) {
+        if (plugin.hooks().inventoryReady(player) && items().definition(stack) != null) items().refresh(stack, player);
+    }
+
+    public void beginSession(Player player) {
+        sessions.put(player.getUniqueId(), new Session(player)); queued.remove(player.getUniqueId());
+        pendingMigration.add(player.getUniqueId()); nextMigration.remove(player.getUniqueId()); later(player);
+    }
+    @EventHandler(priority = EventPriority.MONITOR) public void join(PlayerJoinEvent e) { beginSession(e.getPlayer()); }
     @EventHandler(priority = EventPriority.MONITOR) public void changed(PlayerInventorySlotChangeEvent e) { later(e.getPlayer()); }
     @EventHandler(priority = EventPriority.MONITOR) public void respawn(PlayerRespawnEvent e) { later(e.getPlayer()); }
     @EventHandler public void quit(PlayerQuitEvent e) {
+        var current = sessions.get(e.getPlayer().getUniqueId());
+        if (current != null && current.player() != e.getPlayer()) return;
+        sessions.remove(e.getPlayer().getUniqueId());
         plugin.hooks().clearBonuses(e.getPlayer()); lastMessage.remove(e.getPlayer().getUniqueId()); queued.remove(e.getPlayer().getUniqueId());
-        entityUses.remove(e.getPlayer().getUniqueId());
+        entityUses.remove(e.getPlayer().getUniqueId()); pendingMigration.remove(e.getPlayer().getUniqueId()); nextMigration.remove(e.getPlayer().getUniqueId());
     }
 
     public void later(Player p) {
-        if (!queued.add(p.getUniqueId())) return;
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            queued.remove(p.getUniqueId());
-            if (p.isOnline()) reconcile(p);
+        Session session = sessions.computeIfAbsent(p.getUniqueId(), id -> new Session(p));
+        if (session.player() != p || !queued.add(p.getUniqueId())) return;
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override public void run() {
+                if (sessions.get(p.getUniqueId()) != session) return;
+                if (!p.isOnline()) { queued.remove(p.getUniqueId()); return; }
+                if (pendingMigration.contains(p.getUniqueId()) && !plugin.hooks().inventoryReady(p)) {
+                    Bukkit.getScheduler().runTaskLater(plugin, this, 20); return;
+                }
+                queued.remove(p.getUniqueId());
+                reconcile(p);
+                if (pendingMigration.contains(p.getUniqueId())) {
+                    queued.add(p.getUniqueId()); Bukkit.getScheduler().runTaskLater(plugin, this, 20);
+                }
+            }
         });
     }
 
     public void reconcile(Player p) {
+        Session session = sessions.get(p.getUniqueId());
+        if (session != null && session.player() != p) return;
         if (!plugin.hooks().inventoryReady(p)) { plugin.hooks().clearBonuses(p); return; }
+        if (pendingMigration.contains(p.getUniqueId())
+                && System.currentTimeMillis() >= nextMigration.getOrDefault(p.getUniqueId(), 0L)) {
+            boolean firstAttempt = !nextMigration.containsKey(p.getUniqueId());
+            var result = migrate(p);
+            if (result.failed() > 0) {
+                nextMigration.put(p.getUniqueId(), System.currentTimeMillis() + 5000);
+                if (firstAttempt) plugin.message(p, "messages.migrate-partial", Map.of("updated", Integer.toString(result.updated()),
+                        "removed", Integer.toString(result.removed()), "failed", Integer.toString(result.failed())));
+            }
+        }
+        reconcileReady(p);
+    }
+
+    private void reconcileReady(Player p) {
         var inv = p.getInventory();
         for (int i = 0; i < inv.getSize(); i++) {
             ItemStack original = inv.getItem(i);
             if (items().id(original) == null) continue;
             ItemStack refreshed = original.clone();
             if (items().definition(refreshed) == null) {
-                var meta = refreshed.getItemMeta();
-                meta.setAttributeModifiers(com.google.common.collect.HashMultimap.create()); refreshed.setItemMeta(meta);
+                inv.setItem(i, null);
+                removed(p, original);
+                continue;
             } else items().refresh(refreshed, p);
             if (!refreshed.equals(original)) inv.setItem(i, refreshed);
+        }
+        ItemStack cursor = p.getItemOnCursor();
+        if (items().id(cursor) != null) {
+            if (items().definition(cursor) == null) { p.setItemOnCursor(null); removed(p, cursor); }
+            else {
+                ItemStack refreshed = cursor.clone(); items().refresh(refreshed, p);
+                if (!refreshed.equals(cursor)) p.setItemOnCursor(refreshed);
+            }
         }
         Map<String, Double> totals = new LinkedHashMap<>();
         for (var slot : SLOTS) {
@@ -398,6 +463,70 @@ public final class ItemGuard implements Listener {
             });
         }
         plugin.hooks().updateBonuses(p, totals);
+    }
+
+    public record MigrationResult(int updated, int removed, int failed) { }
+
+    /** Safe to repeat; failed integrations or insufficient split space retain the original stack. */
+    public MigrationResult migrate(Player player) {
+        Session session = sessions.get(player.getUniqueId());
+        if (session != null && session.player() != player) throw new IllegalStateException("Player session changed");
+        if (!plugin.hooks().inventoryReady(player)) throw new IllegalStateException("Inventory is not ready");
+        int updated = 0, removed = 0, failed = 0;
+        var inventory = player.getInventory();
+        for (int slot = 0; slot < inventory.getSize(); slot++) {
+            ItemStack original = inventory.getItem(slot);
+            if (items().id(original) == null) continue;
+            if (items().definition(original) == null) {
+                inventory.setItem(slot, null); removed(player, original); removed++; continue;
+            }
+            try {
+                ItemStack replacement = items().migrate(original, player);
+                if (replacement.equals(original) && replacement.getAmount() <= replacement.getMaxStackSize()) continue;
+                int amount = replacement.getAmount();
+                int maximum = replacement.getMaxStackSize();
+                replacement.setAmount(Math.min(amount, maximum));
+                if (amount > maximum) {
+                    var staging = Bukkit.createInventory(null, 36);
+                    staging.setStorageContents(inventory.getStorageContents());
+                    if (slot < 36) staging.setItem(slot, replacement);
+                    boolean fits = true;
+                    for (int remaining = amount - maximum; remaining > 0;) {
+                        int count = Math.min(remaining, maximum);
+                        var extra = replacement.clone(); extra.setAmount(count);
+                        if (!staging.addItem(extra).isEmpty()) { fits = false; break; }
+                        // addItem may mutate its argument while merging partial stacks.
+                        remaining -= count;
+                    }
+                    if (!fits) { failed++; continue; }
+                    inventory.setStorageContents(staging.getStorageContents());
+                }
+                inventory.setItem(slot, replacement); updated++;
+                migrationWarnings.remove(items().id(original));
+            } catch (IllegalArgumentException | IllegalStateException error) {
+                failed++;
+                if (migrationWarnings.add(items().id(original)))
+                    plugin.getLogger().warning("Could not migrate item " + items().id(original) + ": " + error.getMessage());
+            }
+        }
+        ItemStack cursor = player.getItemOnCursor();
+        if (items().id(cursor) != null) {
+            if (items().definition(cursor) == null) { player.setItemOnCursor(null); removed(player, cursor); removed++; }
+            else try {
+                var replacement = items().migrate(cursor, player);
+                if (replacement.getAmount() > replacement.getMaxStackSize()) failed++;
+                else if (!replacement.equals(cursor)) { player.setItemOnCursor(replacement); updated++; }
+            } catch (IllegalArgumentException | IllegalStateException error) { failed++; }
+        }
+        reconcileReady(player);
+        if (failed == 0) { pendingMigration.remove(player.getUniqueId()); nextMigration.remove(player.getUniqueId()); }
+        return new MigrationResult(updated, removed, failed);
+    }
+
+    private void removed(Player player, ItemStack stack) {
+        var meta = stack.getItemMeta();
+        String name = meta.hasDisplayName() ? PlainTextComponentSerializer.plainText().serialize(meta.displayName()) : items().id(stack);
+        plugin.message(player, "messages.removed-item", Map.of("item", name));
     }
 
     private static boolean workstation(InventoryType type) {

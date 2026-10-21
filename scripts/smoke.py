@@ -171,6 +171,11 @@ def test_items():
     equip-slot: HEAD
     max-stack-size: 1
     max-durability: 10
+    attributes:
+      'minecraft:armor': 4
+      'minecraft:attack_damage': {{amount: 6, slot: MAINHAND}}
+    bonuses:
+      auraskills-additional-strength: 9
     requirements:
       planetry-gamelevel: 5
       auraskills-required-mining: 3
@@ -179,6 +184,18 @@ def test_items():
     type: FOOD
     rarity: COMMON
     max-durability: 0
+    requirements:
+      planetry-gamelevel: 5
+  restricted_hand:
+    material: PAPER
+    type: WEAPON
+    rarity: MYTHICAL
+    max-stack-size: 1
+    max-durability: 10
+    attributes:
+      'minecraft:attack_damage': 6
+    bonuses:
+      auraskills-additional-strength: 9
     requirements:
       planetry-gamelevel: 5
   food_plain:
@@ -267,6 +284,17 @@ def test_items():
 """
 
 
+def nested_items():
+    return """items:
+  nested_probe:
+    material: AMETHYST_SHARD
+    display-name: 'Nested Probe'
+    rarity: EPIC
+    type: ITEM
+    max-durability: 0
+"""
+
+
 def run_server(java, work, log_file):
     process = subprocess.Popen(
         [str(java), "-Xms256m", "-Xmx768m", "-jar", "paper.jar", "--nogui"],
@@ -343,6 +371,9 @@ def main():
         (work / "plugins/PlanetryItems").mkdir(parents=True)
         shutil.copyfile(plugin, work / "plugins/PlanetryItems.jar")
         (work / "plugins/PlanetryItems/items.yml").write_text(test_items(), encoding="utf-8")
+        # Keep items/ absent for the startup import, then let the probe add and reload
+        # this separate nested file without replacing the imported legacy catalog.
+        (work / "plugins/PlanetryItems/nested-fixture.yml").write_text(nested_items(), encoding="utf-8")
         (work / "plugins/PlanetryItems/config.yml").write_text("refresh-interval-ticks: 2\n", encoding="utf-8")
         (work / "paper.jar").write_bytes(paper)
         (work / "eula.txt").write_text("eula=true\n", encoding="utf-8")

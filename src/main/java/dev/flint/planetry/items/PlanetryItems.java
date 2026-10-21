@@ -2,6 +2,9 @@ package dev.flint.planetry.items;
 
 import java.util.*;
 import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
+import org.bukkit.persistence.PersistentDataType;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -16,19 +19,23 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     private ItemService items;
     private ItemGuard guard;
     private int refreshTicks;
+    private static final long MIGRATE_COOLDOWN = 2 * 60 * 60 * 1000L;
 
     @Override public void onEnable() {
         hooks = new IntegrationHooks(this);
         items = new ItemService(this);
         try {
-            for (String file : List.of("config.yml", "items.yml", "lang.yml")) {
+            for (String file : List.of("config.yml", "lang.yml")) {
                 if (!getDataFolder().toPath().resolve(file).toFile().exists()) saveResource(file, false);
             }
+            ItemFiles.initialize(getDataFolder().toPath(), getResource("items.yml"));
             loadDefinitions();
             guard = new ItemGuard(this);
             Bukkit.getPluginManager().registerEvents(guard, this);
             Objects.requireNonNull(getCommand("planetryitems")).setExecutor(this);
             getCommand("planetryitems").setTabCompleter(this);
+            Objects.requireNonNull(getCommand("migrate")).setExecutor(this);
+            getCommand("migrate").setTabCompleter(this);
             // Fixed scheduler supports atomic interval reload without replacing running tasks.
             Bukkit.getScheduler().runTaskTimer(this, new Runnable() {
                 int elapsed;
@@ -40,7 +47,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
                     for (Player player : Bukkit.getOnlinePlayers()) guard.reconcile(player);
                 }
             }, 1, 1);
-            Bukkit.getOnlinePlayers().forEach(guard::later);
+            Bukkit.getOnlinePlayers().forEach(guard::beginSession);
             getLogger().info("PlanetryItems enabled with " + catalog.definitions().size() + " item definitions.");
         } catch (Exception error) {
             getLogger().severe("Cannot load PlanetryItems: " + error.getMessage());
@@ -56,7 +63,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         Object rawTicks = configuration.get("refresh-interval-ticks", 20);
         if (!(rawTicks instanceof Integer ticks) || ticks < 1 || ticks > 1200)
             throw new IllegalArgumentException("refresh-interval-ticks must be an integer from 1 to 1200");
-        ItemCatalog nextCatalog = ItemCatalog.load(data.resolve("items.yml"));
+        ItemCatalog nextCatalog = ItemCatalog.load(data.resolve("items"));
         items.validate(nextCatalog);
         ItemLanguage nextLanguage = ItemLanguage.load(data.resolve("lang.yml"));
         for (var definition : nextCatalog.definitions().values()) {
@@ -78,11 +85,12 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     }
 
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!sender.hasPermission("planetryitems.admin")) { message(sender, "messages.no-permission", Map.of()); return true; }
+        if (command.getName().equalsIgnoreCase("migrate")) return migrate(sender, args);
+        if (!sender.hasPermission("planetry.admin.items")) { message(sender, "messages.no-permission", Map.of()); return true; }
         if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
             try {
                 loadDefinitions();
-                Bukkit.getOnlinePlayers().forEach(guard::reconcile);
+                Bukkit.getOnlinePlayers().forEach(guard::beginSession);
                 message(sender, "messages.reloaded", Map.of());
             } catch (Exception error) {
                 getLogger().warning("Reload rejected: " + error.getMessage());
@@ -98,8 +106,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
             ItemStack stack = player.getInventory().getItemInMainHand();
             var def = items.definition(stack);
             if (def == null) { message(sender, "messages.no-item", Map.of()); return true; }
-            message(sender, "messages.info", Map.of("id", def.id(), "current", Integer.toString(items.currentDurability(stack)),
-                    "max", Integer.toString(def.maxDurability()))); return true;
+            info(player, stack, def); return true;
         }
         if (args.length >= 3 && args.length <= 4 && args[0].equalsIgnoreCase("give")) {
             Player target = Bukkit.getPlayerExact(args[1]);
@@ -134,8 +141,60 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         message(sender, "messages.usage", Map.of()); return true;
     }
 
+    private boolean migrate(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) { message(sender, "messages.player-only", Map.of()); return true; }
+        if (args.length != 0) { message(sender, "messages.migrate-usage", Map.of()); return true; }
+        if (!hooks.inventoryReady(player)) { message(sender, "messages.integration-unavailable", Map.of()); return true; }
+        var key = new NamespacedKey(this, "last_migrate");
+        var data = player.getPersistentDataContainer();
+        long now = System.currentTimeMillis();
+        long last = data.getOrDefault(key, PersistentDataType.LONG, 0L);
+        long elapsed = now >= last ? now - last : 0;
+        if (last > 0 && elapsed < MIGRATE_COOLDOWN) {
+            long minutes = Math.max(1, (MIGRATE_COOLDOWN - elapsed + 59_999) / 60_000);
+            message(sender, "messages.migrate-cooldown", Map.of("remaining", minutes / 60 + "h " + minutes % 60 + "m"));
+            return true;
+        }
+        var result = guard.migrate(player);
+        if (result.failed() == 0) data.set(key, PersistentDataType.LONG, now);
+        message(sender, result.failed() == 0 ? "messages.migrate-success" : "messages.migrate-partial",
+                Map.of("updated", Integer.toString(result.updated()), "removed", Integer.toString(result.removed()),
+                        "failed", Integer.toString(result.failed())));
+        return true;
+    }
+
+    private void info(Player player, ItemStack stack, ItemDefinition def) {
+        var plain = PlainTextComponentSerializer.plainText();
+        var attributes = new ArrayList<String>();
+        def.attributes().forEach((key, value) -> attributes.add(key + "=" + value.amount()
+                + " (" + value.operation() + ", " + value.slot() + ")"));
+        var requirements = new ArrayList<String>();
+        def.requirements().forEach((key, value) -> requirements.add(language.requirementLabel(key, value, hooks::glyph) + " (" + key + ")"));
+        var values = new LinkedHashMap<String, String>();
+        values.put("id", def.id()); values.put("name", plain.serialize(language.displayName(def, hooks::glyph)));
+        values.put("material", stack.getType().name()); values.put("configured-material", def.material());
+        values.put("rarity", def.rarity()); values.put("type", def.type());
+        values.put("model", stack.getItemMeta().getCustomModelDataComponent().getFloats().toString());
+        values.put("nexo", def.nexoId().isEmpty() ? "none" : def.nexoId());
+        values.put("base64", def.base64().isEmpty() ? "none" : def.base64());
+        values.put("equip", def.equipSlot() == null ? "none" : def.equipSlot());
+        values.put("amount", Integer.toString(stack.getAmount())); values.put("stack", Integer.toString(def.maxStackSize()));
+        values.put("current", Integer.toString(items.currentDurability(stack))); values.put("max", Integer.toString(def.maxDurability()));
+        values.put("unbreakable", Boolean.toString(def.unbreakable()));
+        values.put("attributes", attributes.isEmpty() ? "none" : String.join("; ", attributes));
+        values.put("bonuses", def.bonuses().isEmpty() ? "none" : def.bonuses().toString());
+        values.put("requirements", requirements.isEmpty() ? "none" : String.join(", ", requirements));
+        values.put("lore", String.join(" | ", def.lore().stream().map(line -> plain.serialize(language.render(line, Map.of(), hooks::glyph))).toList()));
+        values.put("usable", Boolean.toString(items.usable(player, stack)));
+        message(player, "messages.info", values);
+        // Detail output remains complete even when an administrator retains the old customizable header.
+        for (String field : List.of("name", "material", "configured-material", "rarity", "type", "model", "nexo", "base64", "equip",
+                "amount", "stack", "unbreakable", "attributes", "bonuses", "requirements", "lore", "usable"))
+            player.sendMessage(net.kyori.adventure.text.Component.text(field + ": " + values.get(field)));
+    }
+
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (!sender.hasPermission("planetryitems.admin")) return List.of();
+        if (command.getName().equalsIgnoreCase("migrate") || !sender.hasPermission("planetry.admin.items")) return List.of();
         List<String> options = args.length == 1 ? List.of("give", "list", "reload", "info")
                 : args.length == 2 && args[0].equalsIgnoreCase("give") ? Bukkit.getOnlinePlayers().stream().map(Player::getName).toList()
                 : args.length == 3 && args[0].equalsIgnoreCase("give") ? new ArrayList<>(catalog.definitions().keySet()) : List.of();

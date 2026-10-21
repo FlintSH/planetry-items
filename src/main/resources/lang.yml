@@ -37,6 +37,11 @@ requirements:
   auraskills-required-fishing: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Fishing Level {value}'
   auraskills-required-fighting: '<dark_gray>[<#FCF55F>☆<dark_gray>] <#FFEA00>Requires <#FCF55F>Fighting Level {value}'
 
+# Plain labels for requirement denial messages and /pitems info, without lore prefixes.
+requirement-labels:
+  default: '{requirement} Level {value}'
+  planetry-gamelevel: 'Game Level {value}'
+
 rarities:
   common: '<glyph:tag_common>'
   uncommon: '<glyph:tag_uncommon>'
@@ -46,17 +51,16 @@ rarities:
   mythical: '<glyph:tag_mythical>'
 
 glyph-fallbacks:
-  tag_common: '<white>COMMON'
+  tag_common: '<gray>COMMON'
   tag_uncommon: '<green>UNCOMMON'
-  tag_rare: '<#6495ED>RARE'
-  tag_epic: '<#BF40BF>EPIC'
-  tag_legendary: '<gold>LEGENDARY'
-  tag_mythical: '<light_purple>MYTHICAL'
+  tag_rare: '<aqua>RARE'
+  tag_epic: '<#9554EA>EPIC'
+  tag_legendary: '<#FFBF00>LEGENDARY'
+  tag_mythical: '<red>MYTHICAL'
 
 lore:
   durability: '<gray>Durability: {current}/{max}'
   durability-low: '<gray>Durability: <red>{current}<gray>/{max}'
-  unbreakable: '<gray>Unbreakable'
 
 messages:
   usage: '<gray>/planetryitems list | give <player> <item> [amount] | reload | info'
@@ -70,11 +74,16 @@ messages:
   received: '<green>You received {amount} × {item}.'
   reloaded: '<green>PlanetryItems reloaded.'
   reload-failed: '<red>Could not reload PlanetryItems: {error}. The previous configuration is still active.'
-  requirements: '<red>You cannot use {item}: {requirements}.'
-  requirements-not-met: '<red>You cannot use {item}: {requirements}.'
+  requirements: '<red>You cannot use this item: {requirements}!'
+  requirements-not-met: '<red>You cannot use this item: {requirements}!'
   workstation-blocked: '<red>Custom items cannot be used in crafting or workstations.'
   list: '<gray>PlanetryItems: <white>{items}'
   disabled-item: '<red>This item is unavailable. Contact an administrator.'
   integration-unavailable: '<red>This item needs an integration that is currently unavailable.'
   no-item: '<red>Hold a Planetry item first.'
   info: '<gray>Item: <white>{id}<gray>, durability: <white>{current}/{max}'
+  migrate-usage: '<gray>/migrate'
+  migrate-success: '<green>Migration complete: updated {updated} items and removed {removed} unavailable items.'
+  migrate-partial: '<red>Updated {updated} items and removed {removed} unavailable items, but could not update {failed} items. Free inventory space or check the required integration, then try again.'
+  migrate-cooldown: '<red>You can use /migrate again in {remaining}.'
+  removed-item: '<red>Removed {item} because it is no longer available. Please contact staff.'

@@ -1,6 +1,8 @@
 package dev.flint.planetry.items;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TranslatableComponent;
+import net.kyori.adventure.text.TranslationArgument;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
@@ -61,9 +63,12 @@ class ItemLanguageTest {
         assertEquals("Durability: 100/100", PLAIN.serialize(lang.lore(item, 200, Set.of(), null).getLast()));
     }
 
-    @Test void unbreakableLoreReplacesNumericDurability() throws Exception {
-        var item = item("unbreakable: true");
-        assertEquals("Unbreakable", PLAIN.serialize(language("").lore(item, 50, Set.of(), null).getLast()));
+    @Test void unbreakableItemsHideDurabilityAndLegacyUnbreakableLore() throws Exception {
+        var lang = language("lore:\n  unbreakable: '<red>Unbreakable legacy setting'\n");
+        for (int maximum : List.of(0, 100)) {
+            var item = item("unbreakable: true\nmax-durability: " + maximum);
+            assertEquals(List.of("ɪᴛᴇᴍ", "", "COMMON"), plain(lang.lore(item, 50, Set.of(), null)));
+        }
     }
 
     @Test void finalDurabilityPointIsRedEvenForSmallMaximums() throws Exception {
@@ -92,6 +97,113 @@ class ItemLanguageTest {
         assertEquals("Common fallback", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), null)));
         assertEquals("Common fallback", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), ignored -> Component.empty())));
         assertEquals("NEXO", PLAIN.serialize(lang.render("<glyph:tag_common>", Map.of(), ignored -> Component.text("NEXO"))));
+    }
+
+    @Test void rarityColorsOverrideExplicitNestedNameAndGlyphColors() throws Exception {
+        var colors = Map.of(
+                "COMMON", NamedTextColor.GRAY,
+                "UNCOMMON", NamedTextColor.GREEN,
+                "RARE", NamedTextColor.AQUA,
+                "EPIC", TextColor.color(0x9554EA),
+                "LEGENDARY", TextColor.color(0xFFBF00),
+                "MYTHICAL", NamedTextColor.RED);
+        var lang = language("");
+        for (var entry : colors.entrySet()) {
+            var item = item("rarity: " + entry.getKey()
+                    + "\ndisplay-name: '<white>Probe <red>Blade</red> <bold><gradient:red:blue>Glow</gradient></bold> <glyph:name>'\n");
+            Component name = lang.displayName(item, ignored -> Component.text("Glyph", NamedTextColor.LIGHT_PURPLE)
+                    .append(Component.text(" Child", NamedTextColor.GREEN)));
+            assertEquals("Probe Blade Glow Glyph Child", PLAIN.serialize(name));
+            assertColorTree(name, entry.getValue());
+            assertEquals(TextDecoration.State.FALSE, name.decoration(TextDecoration.ITALIC));
+        }
+    }
+
+    @Test void plainRequirementSummaryUsesDefinitionOrderAndLeavesLoreDecorationIntact() throws Exception {
+        var item = item("""
+                requirements:
+                  auraskills-required-mining: 3
+                  planetry-gamelevel: 5
+                  auraskills-required-farming: 4
+                """);
+        var lang = language("");
+        var unmet = Set.of("planetry-gamelevel", "auraskills-required-mining", "unknown");
+        String summary = lang.requirementSummary(item, unmet, null);
+        assertEquals("Mining Level 3, Game Level 5", summary);
+        assertEquals("", lang.requirementSummary(item, Set.of(), null));
+        assertEquals("Farming Level 4", lang.requirementLabel("auraskills-required-farming", 4, null));
+        assertTrue(plain(lang.lore(item, 100, unmet, null)).contains("[☆] Requires Mining Level 3"));
+        for (String key : List.of("messages.requirements", "messages.requirements-not-met")) {
+            assertEquals("You cannot use this item: Mining Level 3, Game Level 5!",
+                    PLAIN.serialize(lang.text(key, Map.of("requirements", summary, "item", "sample"), null)));
+        }
+    }
+
+    @Test void rarityColorsOverrideTranslationArgumentsAndPreserveTypedValues() throws Exception {
+        var lang = language("");
+        var translatedName = item("""
+                rarity: COMMON
+                display-name: "<lang:chat.square_brackets:'<red>Blade'>"
+                """);
+        var name = lang.displayName(translatedName, null);
+        var translation = assertInstanceOf(TranslatableComponent.class, name);
+        assertEquals("Blade", PLAIN.serialize(assertInstanceOf(Component.class, translation.arguments().getFirst().value())));
+        assertColorTree(name, NamedTextColor.GRAY);
+
+        var glyphName = item("rarity: EPIC\ndisplay-name: '<glyph:name>'\n");
+        Component glyph = Component.translatable("custom.typed").arguments(
+                Component.text("Blade", NamedTextColor.RED), TranslationArgument.numeric(3), TranslationArgument.bool(true));
+        var glyphTranslation = assertInstanceOf(TranslatableComponent.class, lang.displayName(glyphName, ignored -> glyph));
+        assertColorTree(glyphTranslation, TextColor.color(0x9554EA));
+        assertEquals(3, assertInstanceOf(Number.class, glyphTranslation.arguments().get(1).value()).intValue());
+        assertEquals(true, glyphTranslation.arguments().get(2).value());
+    }
+
+    @Test void requirementLabelsCanBeTranslatedSeparatelyFromLore() throws Exception {
+        var lang = language("""
+                requirements:
+                  auraskills-required-mining: '<red>[custom lore] Requires {value}'
+                requirement-labels:
+                  default: '<yellow>Reach {requirement} {value}'
+                  planetry-gamelevel: '<green>Game Rank {value}'
+                """);
+        assertEquals("Reach Mining 3", lang.requirementLabel("auraskills-required-mining", 3, null));
+        assertEquals("Game Rank 5", lang.requirementLabel("planetry-gamelevel", 5, null));
+    }
+
+    @Test void upgradesOnlyExactLegacyDefaultDenialsAndPreservesCustomTranslations() throws Exception {
+        var upgraded = language("""
+                messages:
+                  requirements: '<red>You cannot use {item}: {requirements}.'
+                  requirements-not-met: '<red>You cannot use {item}: {requirements}.'
+                """);
+        for (String key : List.of("messages.requirements", "messages.requirements-not-met")) {
+            assertEquals("You cannot use this item: Game Level 5!",
+                    PLAIN.serialize(upgraded.text(key, Map.of("item", "sample", "requirements", "Game Level 5"), null)));
+        }
+        var custom = language("""
+                messages:
+                  requirements: '<yellow>Benötigt: {requirements}!'
+                  requirements-not-met: '<blue>You cannot use {item}: {requirements}.'
+                """);
+        assertEquals("Benötigt: Game Level 5!",
+                PLAIN.serialize(custom.text("messages.requirements", Map.of("requirements", "Game Level 5"), null)));
+        assertEquals("You cannot use sample: Game Level 5.", PLAIN.serialize(custom.text("messages.requirements-not-met",
+                Map.of("item", "sample", "requirements", "Game Level 5"), null)));
+    }
+
+    @Test void migrationDefaultsIncludeCountsCooldownAndLiteralRemovedName() throws Exception {
+        var lang = language("");
+        var counts = Map.of("updated", "3", "removed", "2", "failed", "1");
+        assertEquals("Migration complete: updated 3 items and removed 2 unavailable items.",
+                PLAIN.serialize(lang.text("messages.migrate-success", counts, null)));
+        assertEquals("Updated 3 items and removed 2 unavailable items, but could not update 1 items. "
+                        + "Free inventory space or check the required integration, then try again.",
+                PLAIN.serialize(lang.text("messages.migrate-partial", counts, null)));
+        assertEquals("You can use /migrate again in 1h 59m.", PLAIN.serialize(lang.text("messages.migrate-cooldown",
+                Map.of("remaining", "1h 59m"), null)));
+        assertEquals("Removed <gold>Old Blade because it is no longer available. Please contact staff.",
+                PLAIN.serialize(lang.text("messages.removed-item", Map.of("item", "<gold>Old Blade"), null)));
     }
 
     @Test void allowsCustomAttributePrefixesAndPercentages() throws Exception {
@@ -143,5 +255,15 @@ class ItemLanguageTest {
 
     private static boolean hasColor(Component component, TextColor color) {
         return color.equals(component.color()) || component.children().stream().anyMatch(child -> hasColor(child, color));
+    }
+
+    private static void assertColorTree(Component component, TextColor color) {
+        assertEquals(color, component.color());
+        component.children().forEach(child -> assertColorTree(child, color));
+        if (component instanceof TranslatableComponent translated) {
+            translated.arguments().forEach(argument -> {
+                if (argument.value() instanceof Component value) assertColorTree(value, color);
+            });
+        }
     }
 }

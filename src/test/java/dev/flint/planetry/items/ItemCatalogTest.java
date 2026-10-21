@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -14,6 +15,81 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ItemCatalogTest {
     @TempDir Path directory;
+
+    @Test void loadsNestedYamlFilesInRelativePathOrder() throws Exception {
+        Path items = Files.createDirectory(directory.resolve("items"));
+        write(items.resolve("z-last.YAML"), "items:\n  last: {}\n");
+        write(items.resolve("nested/20-tools.yaml"), "items:\n  second: {}\n  first: {}\n");
+        write(items.resolve("a-first.yml"), "schema-version: 1\nitems:\n  root: {}\n");
+        write(items.resolve("nested/notes.txt"), "This is not YAML: [\n");
+        write(directory.resolve("items.yml"), "items:\n  stale_legacy: {}\n");
+
+        var catalog = ItemCatalog.load(items);
+
+        assertEquals(List.of("root", "second", "first", "last"), List.copyOf(catalog.definitions().keySet()));
+        assertNull(catalog.get("stale_legacy"));
+    }
+
+    @Test void emptyDirectoryAllowsRemovingTheEntireCatalog() throws Exception {
+        Path items = Files.createDirectory(directory.resolve("items"));
+        Path file = items.resolve("last.yml");
+        write(file, "items:\n  last: {}\n");
+        assertNotNull(ItemCatalog.load(items).get("last"));
+
+        Files.delete(file);
+
+        assertTrue(ItemCatalog.load(items).definitions().isEmpty());
+    }
+
+    @Test void duplicateIdsAcrossFilesRejectTheEntireCatalogAndIdentifyBothSources() throws Exception {
+        Path items = Files.createDirectory(directory.resolve("items"));
+        write(items.resolve("a-first.yml"), "items:\n  shared: {}\n");
+        write(items.resolve("nested/z-last.yaml"), "items:\n  unique: {}\n  shared: {}\n");
+
+        var failure = assertThrows(IllegalArgumentException.class, () -> ItemCatalog.load(items));
+
+        assertTrue(failure.getMessage().contains("shared"));
+        assertTrue(failure.getMessage().contains("a-first.yml"));
+        assertTrue(failure.getMessage().contains(Path.of("nested", "z-last.yaml").toString()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"items: [", "items:\n  broken:\n    material: NOT_A_MATERIAL\n"})
+    void malformedNestedFilesRejectLoadWithoutChangingAnExistingCatalog(String malformed) throws Exception {
+        Path items = Files.createDirectory(directory.resolve("items"));
+        write(items.resolve("a-valid.yml"), "items:\n  original: {}\n");
+        var previous = ItemCatalog.load(items);
+        write(items.resolve("nested/a-valid.yaml"), "items:\n  new_item: {}\n");
+        Path invalid = items.resolve("nested/z-invalid.yml");
+        write(invalid, malformed);
+
+        var failure = assertThrows(IllegalArgumentException.class, () -> ItemCatalog.load(items));
+
+        assertTrue(failure.getMessage().contains(Path.of("nested", "z-invalid.yml").toString()));
+        assertEquals(List.of("original"), List.copyOf(previous.definitions().keySet()));
+        Files.delete(invalid);
+        assertEquals(List.of("original", "new_item"), List.copyOf(ItemCatalog.load(items).definitions().keySet()));
+    }
+
+    @Test void rejectsExternalFileAndDirectorySymlinks() throws Exception {
+        Path items = Files.createDirectory(directory.resolve("items"));
+        Path outside = directory.resolve("outside.yml");
+        write(outside, "items:\n  external: {}\n");
+        Path fileLink = Files.createSymbolicLink(items.resolve("linked.yml"), outside);
+        assertThrows(IOException.class, () -> ItemCatalog.load(items));
+        assertThrows(IOException.class, () -> ItemCatalog.load(fileLink));
+        Files.delete(fileLink);
+
+        Path outsideDirectory = Files.createDirectory(directory.resolve("outside"));
+        write(outsideDirectory.resolve("items.yaml"), "items:\n  external: {}\n");
+        Path directoryLink = Files.createSymbolicLink(items.resolve("linked"), outsideDirectory);
+        assertThrows(IOException.class, () -> ItemCatalog.load(items));
+        assertThrows(IOException.class, () -> ItemCatalog.load(directoryLink));
+    }
+
+    @Test void missingDirectoriesFailInsteadOfRemovingTheCatalog() {
+        assertThrows(IOException.class, () -> ItemCatalog.load(directory.resolve("missing")));
+    }
 
     @Test void defaultsAreImmutableAndDoNotInventBonuses() throws Exception {
         var catalog = load("items:\n  rock:\n    material: STONE\n");
@@ -151,7 +227,12 @@ class ItemCatalogTest {
 
     private ItemCatalog load(String content) throws Exception {
         Path file = directory.resolve("items.yml");
-        Files.writeString(file, content);
+        write(file, content);
         return ItemCatalog.load(file);
+    }
+
+    private void write(Path file, String content) throws IOException {
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content);
     }
 }

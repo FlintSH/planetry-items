@@ -1,10 +1,15 @@
 package dev.flint.planetry.items;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TranslatableComponent;
+import net.kyori.adventure.text.TranslationArgument;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.Tag;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -25,6 +30,8 @@ import java.util.regex.Pattern;
 /** Configurable item tooltips and command messages, with literal-safe dynamic values. */
 public final class ItemLanguage {
     private static final MiniMessage MINI_MESSAGE = MiniMessage.miniMessage();
+    private static final PlainTextComponentSerializer PLAIN = PlainTextComponentSerializer.plainText();
+    private static final String LEGACY_REQUIREMENTS_MESSAGE = "<red>You cannot use {item}: {requirements}.";
     private static final Pattern VALUE = Pattern.compile("\\{([A-Za-z0-9_-]+)}");
     private static final Pattern GLYPH_TAG = Pattern.compile("<glyph(?=[:>])([^>]*)(?:>|$)", Pattern.CASE_INSENSITIVE);
     private static final String NORMAL = "abcdefghijklmnopqrstuvwxyz";
@@ -47,6 +54,10 @@ public final class ItemLanguage {
         validateVersion(root);
         var overrides = new LinkedHashMap<String, String>();
         flatten(root, "", overrides);
+        // Upgrade only the old bundled wording; keep every customized translation intact.
+        for (String key : List.of("messages.requirements", "messages.requirements-not-met")) {
+            if (LEGACY_REQUIREMENTS_MESSAGE.equals(overrides.get(key))) overrides.remove(key);
+        }
         templates.putAll(overrides);
         var language = new ItemLanguage(templates);
         for (var entry : templates.entrySet()) {
@@ -116,6 +127,45 @@ public final class ItemLanguage {
         return render(templates.getOrDefault(key, key), values, glyphResolver);
     }
 
+    /** Rarity owns the complete visible name color, including explicitly colored nested text and glyphs. */
+    public Component displayName(ItemDefinition definition, Function<String, Component> glyphResolver) {
+        TextColor color = switch (definition.rarity().toUpperCase(Locale.ROOT)) {
+            case "UNCOMMON" -> NamedTextColor.GREEN;
+            case "RARE" -> NamedTextColor.AQUA;
+            case "EPIC" -> TextColor.color(0x9554EA);
+            case "LEGENDARY" -> TextColor.color(0xFFBF00);
+            case "MYTHICAL" -> NamedTextColor.RED;
+            default -> NamedTextColor.GRAY;
+        };
+        return colorName(render(definition.displayName(), Map.of(), glyphResolver), color);
+    }
+
+    private static Component colorName(Component component, TextColor color) {
+        if (component instanceof TranslatableComponent translated) {
+            component = translated.arguments(translated.arguments().stream()
+                    .map(argument -> argument.value() instanceof Component value
+                            ? TranslationArgument.component(colorName(value, color)) : argument).toList());
+        }
+        return component.color(color).children(component.children().stream().map(child -> colorName(child, color)).toList());
+    }
+
+    /** A plain requirement label for command output, independent of decorated requirement lore. */
+    public String requirementLabel(String key, int value, Function<String, Component> glyphResolver) {
+        String fallback = templates.getOrDefault("requirement-labels.default", "{requirement} Level {value}");
+        String template = templates.getOrDefault("requirement-labels." + key, fallback);
+        return PLAIN.serialize(render(template, Map.of("value", Integer.toString(value), "requirement", humanize(key)), glyphResolver));
+    }
+
+    /** Unmet requirements retain catalog order and never inherit decorative lore prefixes. */
+    public String requirementSummary(ItemDefinition definition, Set<String> unmetRequirements,
+                                     Function<String, Component> glyphResolver) {
+        var labels = new ArrayList<String>();
+        definition.requirements().forEach((key, value) -> {
+            if (unmetRequirements.contains(key)) labels.add(requirementLabel(key, value, glyphResolver));
+        });
+        return String.join(", ", labels);
+    }
+
     public List<Component> lore(ItemDefinition definition, int current, Set<String> unmetRequirements,
                                 Function<String, Component> glyphResolver) {
         var result = new ArrayList<Component>();
@@ -151,13 +201,10 @@ public final class ItemLanguage {
         section(result, requirements);
         section(result, List.of(text("rarities." + definition.rarity().toLowerCase(Locale.ROOT), Map.of(), glyphResolver)));
 
-        if (definition.maxDurability() > 0) {
+        if (!definition.unbreakable() && definition.maxDurability() > 0) {
             int remaining = Math.max(0, Math.min(current, definition.maxDurability()));
-            String key = definition.unbreakable() ? "lore.unbreakable"
-                    : remaining <= Math.max(1, definition.maxDurability() / 10.0) ? "lore.durability-low" : "lore.durability";
+            String key = remaining <= Math.max(1, definition.maxDurability() / 10.0) ? "lore.durability-low" : "lore.durability";
             result.add(text(key, Map.of("current", Integer.toString(remaining), "max", Integer.toString(definition.maxDurability())), glyphResolver));
-        } else if (definition.unbreakable()) {
-            result.add(text("lore.unbreakable", Map.of(), glyphResolver));
         }
         return List.copyOf(result);
     }

@@ -9,8 +9,11 @@ commands:
   planetryitems:
     aliases: [pitems]
     description: Manage Planetry custom items
-    usage: /<command> <list|give|reload>
+    usage: /<command> <list|give|reload|info>
+  migrate:
+    description: Update your Planetry items (two-hour cooldown)
+    usage: /<command>
 permissions:
-  planetryitems.admin:
-    description: List, give and reload custom items
+  planetry.admin.items:
+    description: List, give, inspect and reload custom items
     default: op
