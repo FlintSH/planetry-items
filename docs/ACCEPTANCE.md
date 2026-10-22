@@ -1,5 +1,8 @@
 # Validation
 
+[Documentation home](../README.md) · [Staff guide](STAFF_GUIDE.md) ·
+[Build and API reference](DEVELOPMENT.md)
+
 Build on Java25, then test the exact packaged JAR:
 
 ```sh
@@ -25,6 +28,13 @@ low-durability colouring and optional integration failure/cleanup. Recursive fol
 ordering, cross-file duplicate rejection, invalid nested definitions, safe one-time
 legacy import, empty directories, symbolic links, rarity name coloring and clean
 requirement messages have regression coverage.
+
+`DocumentationExamplesTest` loads the six-item catalog in
+`docs/examples/items/` through the production catalog reader, checks the
+first-item walkthrough matches that catalog, and loads/renders the copied
+partial language override. It validates configuration and template behavior;
+the placeholder Nexo source still requires a real loaded ID, and these tests
+do not prove client rendering or grant every documented example in-game.
 
 Real Paper probes validate actual ItemStack components and serialization, empty
 vanilla attributes, registry attributes, custom equipment, head texture properties,

@@ -1,0 +1,91 @@
+# Copy to plugins/PlanetryItems/items/staff.yml. IDs must be unique across all files.
+# Replace the guide's first example if present; do not duplicate staff_crystal.
+schema-version: 1
+items:
+  staff_crystal:
+    material: AMETHYST_SHARD
+    display-name: 'Training Crystal'
+    lore:
+      - '<gray>A crystal for the staff training session.'
+    rarity: RARE
+    type: ITEM
+    max-stack-size: 64
+    max-durability: 0
+
+  staff_blade:
+    material: IRON_SWORD
+    display-name: '<bold>Training Blade'
+    lore: |
+      <gray>A blade for trained explorers.
+      <gray>Its name takes the EPIC rarity color.
+    rarity: EPIC
+    type: WEAPON
+    max-stack-size: 1
+    max-durability: 250
+    unbreakable: false
+    # Modifiers replace material defaults. These are added amounts, not final stats.
+    attributes:
+      minecraft:attack_damage: 7
+      minecraft:attack_speed:
+        amount: -2.4
+        operation: ADD_NUMBER
+        slot: MAINHAND
+      minecraft:movement_speed:
+        amount: 0.1
+        operation: ADD_SCALAR
+        slot: MAINHAND
+    bonuses:
+      auraskills-additional-strength: 2
+    # Requires loaded Core and AuraSkills player data.
+    requirements:
+      planetry-gamelevel: 5
+      auraskills-required-fighting: 10
+
+  staff_helmet:
+    material: PAPER
+    display-name: 'Training Helmet'
+    lore:
+      - '<gray>Oxygen is metadata; this plugin does not consume it.'
+    rarity: LEGENDARY
+    type: SPACESUIT
+    equip-slot: HEAD
+    max-stack-size: 1
+    max-durability: 500
+    attributes:
+      minecraft:armor: 3
+    bonuses:
+      planetry-oxygen: 100
+    # PAPER equips, but a worn visual model needs a resource pack.
+
+  staff_ration:
+    material: BREAD
+    display-name: 'Training Ration'
+    rarity: COMMON
+    type: FOOD
+    max-stack-size: 16
+    # Ordinary single-use food; positive durability makes it reusable.
+    max-durability: 0
+
+  staff_keepsake:
+    material: PLAYER_HEAD
+    display-name: 'Training Keepsake'
+    rarity: MYTHICAL
+    type: COSMETIC
+    equip-slot: HEAD
+    max-stack-size: 1
+    max-durability: 0
+    unbreakable: true
+    # Add base64 with a real texture property for a custom head.
+    # Do not use a texture URL/full /give command or combine with nexo-id.
+
+  staff_nexo_pickaxe:
+    # Replace this placeholder with a real loaded Nexo source item ID.
+    nexo-id: your_loaded_nexo_pickaxe
+    material: DIAMOND_PICKAXE
+    display-name: 'Training Pickaxe'
+    rarity: UNCOMMON
+    type: TOOL
+    max-stack-size: 1
+    max-durability: 800
+    requirements:
+      auraskills-required-mining: 10

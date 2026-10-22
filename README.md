@@ -8,6 +8,23 @@ Download a JAR and `SHA256SUMS` from [Releases](https://github.com/FlintSH/plane
 Main CI tests the packaged JAR on pinned Paper before publishing those exact bytes.
 Releases remain prereleases while the full production plugin combination awaits staging.
 
+## Documentation
+
+| I want to… | Read |
+| --- | --- |
+| Create, edit, test and give items as staff | [Staff guide](docs/STAFF_GUIDE.md) |
+| Look up every item field, default, attribute, bonus and requirement | [Configuration reference](docs/CONFIGURATION.md) |
+| Change names, lore, messages, rarity glyphs or Nexo text | [Language and appearance](docs/LANGUAGE.md) |
+| Install, upgrade, reload, migrate or diagnose a problem | [Operations and troubleshooting](docs/OPERATIONS.md) |
+| Build the plugin or use its API | [Developer guide](docs/DEVELOPMENT.md) |
+| Copy complete, validated item definitions | [Example catalog](docs/examples/items/staff-items.yml) |
+| Check automated coverage and staging requirements | [Acceptance checks](docs/ACCEPTANCE.md) |
+
+Staff edit YAML files with a text editor; there is no in-game creation GUI.
+**Keep existing IDs stable and catalogs identical on every backend sharing
+inventories.** Removing or renaming an ID removes existing stacks when player
+inventories update. Read the staff guide before editing a live catalog.
+
 ## Install and configure
 
 1. Stop the backend, add the JAR to its `plugins` folder and start it.
