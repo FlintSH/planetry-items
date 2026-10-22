@@ -52,7 +52,7 @@ There is no requirement bypass node.
 | `/pitems give <online-player> <id> [amount]` | Staff/console; exact online player name; amount defaults to 1, allowed 1–2304 |
 | `/pitems info` | Staff player; inspect the managed item in the main hand |
 | `/pitems soulboundbypass` | Staff player only; toggle the limited soulbound drop override; off by default |
-| `/pitems reload` | Staff/console; validate and activate all configuration together |
+| `/pitems reload` | Staff/console; reload local files or request and confirm proxy definitions/language for this backend |
 | `/migrate` | Any player; no permission, no arguments or target; update their carried inventory |
 
 Console commands use the same arguments without the leading slash. Tab
@@ -88,18 +88,46 @@ to translate the toggle messages and warning.
 
 ## Reload and recover
 
-`/pitems reload` parses `config.yml`, every item file and `lang.yml`, validates
+In local mode, `/pitems reload` parses `config.yml`, every item file and `lang.yml`, validates
 registered attributes and renders templates before replacing the active
 snapshot. It also reloads `refresh-interval-ticks` (integer 1–1200, default 20).
 On success it queues full migration for online players, including visuals.
 Installing/updating PlanetryItems or optional plugins requires a restart.
 
-If reload fails:
+In **proxy mode**, `/pitems reload` reloads the local refresh interval and asks
+PlanetryItems-Velocity for its active item definitions and language. It observes
+an existing sync request or sends a new one, with a short delay if needed to
+respect the proxy's one-request-per-second limit. One reload may wait at a time;
+repeated commands report that a reload is already pending. The command first
+reports syncing, then confirms the applied revision or that it already matches.
+Success requires an authenticated response and, for changed definitions, full
+validation, durable cache storage and activation. Only then is full migration
+queued, subject to Inventory Sync readiness. Failure, rejection, disconnect or
+the ten-second response deadline retains the last good pair. Automatic polling
+continues, and the timeout notice arrives when the next poll/deadline check runs.
+
+At least one player must be connected to this backend to carry the request,
+including when the command runs from the backend console. Without one, the
+command explains that syncing will resume on connection. Local `items/` and
+`lang.yml` remain ignored in proxy mode. Enable `definitions-source: proxy` and
+set the matching private sync key before a full restart; reload cannot switch
+source or key.
+
+After editing files on Velocity, run `/piv reload` there first, then
+`/pitems reload` on the backend you want to sync. The backend command uses the
+proxy's already loaded revision; it does not reread proxy files from disk or
+reload every backend at once. `/piv reload` keeps its separate Velocity
+`planetryitemsvelocity.admin` permission. `/pitems reload` retains backend
+`planetry.admin.items`. New `messages.proxy-sync-*` templates have bundled
+fallbacks and can be customized in the proxy's `lang.yml`. Check `/piv status`
+for every backend's matching `current` revision.
+
+If a local file reload fails:
 
 1. Leave the running backend up: the previous active catalog, language and
    interval remain in use. The command gives a generic error; the console
-   reports the file/field causing rejection.
-2. Fix the reported YAML, unknown key, duplicate ID, invalid number, attribute
+   reports a generic configuration rejection without dumping file contents.
+2. Check YAML, unknown keys, duplicate IDs, invalid numbers, attributes
    or template. Alternatively restore the active files from the backup kept
    outside `items/`.
 3. Run `/pitems reload` again. Check the expected IDs with `/pitems list`, then

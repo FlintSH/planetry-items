@@ -107,6 +107,16 @@ public final class ItemsSyncProbe extends JavaPlugin {
         check(!plugin.hooks().inventoryReady(player.player), "Pending definitions allow inventory mutation");
         passed();
 
+        stage = "reload permission and empty-server feedback retain cold definitions";
+        reload();
+        check(player.messages.stream().anyMatch(text -> text.contains("permission")) && !controller.requestPending(),
+                "Unprivileged reload started sync");
+        player.admin = true;
+        reload();
+        check(player.messages.stream().anyMatch(text -> text.contains("needs a player")) && !controller.ready()
+                && !Files.exists(cachePath()), "Empty-server reload pretended to synchronize");
+        passed();
+
         stage = "missing proxy preserves managed storage and cursor during scheduled reconciliation";
         instance = UUID.randomUUID().toString();
         player.contents[0] = transferred(instance);
@@ -136,6 +146,7 @@ public final class ItemsSyncProbe extends JavaPlugin {
             futureActivation();
             generationFences();
             replayAndCurrent();
+            manualReloadResults();
             persistRestartEvidence();
             succeed();
         });
@@ -168,8 +179,8 @@ public final class ItemsSyncProbe extends JavaPlugin {
         player.online = false;
         for (var packet : packets) receive(player, packet);
         player.online = true;
-        check(controller.requestPending() && !controller.ready() && player.outgoing.isEmpty(),
-                "Rejected packet consumed or committed the pending request");
+        check(!controller.requestPending() && !controller.ready() && player.outgoing.isEmpty(),
+                "Disconnected request remained pending or committed data");
         check(plugin.catalog().definitions().isEmpty() && !Files.exists(cachePath()), "Unauthenticated data activated");
         seed(player, System.nanoTime() - 11_000_000_000L);
         receive(player, packets.getFirst());
@@ -181,6 +192,14 @@ public final class ItemsSyncProbe extends JavaPlugin {
         stage = "signed multipart over 32K activates and persists one matching catalog/language pair";
         SyncProtocol.Snapshot snapshot = snapshot("A", false);
         UUID nonce = seed(player, System.nanoTime());
+        reload();
+        check(player.messages.stream().anyMatch(text -> text.contains("Syncing"))
+                && player.messages.stream().noneMatch(text -> text.contains("Synced")),
+                "Reload reported success before proxy activation");
+        reload();
+        check(player.messages.stream().anyMatch(text -> text.contains("already waiting")),
+                "Repeated reload did not bound command waiters");
+        player.messages.clear();
         var chunks = SyncProtocol.chunks(nonce, snapshot);
         check(SyncProtocol.encodeSnapshot(snapshot).length > 32_767 && chunks.size() >= 2,
                 "Multipart fixture did not cross the plugin-message size boundary");
@@ -191,9 +210,13 @@ public final class ItemsSyncProbe extends JavaPlugin {
         receive(player, chunks.getLast());
         check(plugin.catalog() == oldCatalog && plugin.language() == oldLanguage && !controller.ready()
                 && !Files.exists(cachePath()) && player.outgoing.isEmpty(), "Partial snapshot changed active/cache state");
+        check(player.messages.stream().noneMatch(text -> text.contains("Synced proxy") || text.contains("already match")),
+                "Reload reported success before the final multipart chunk");
         for (int index = 0; index < chunks.size() - 1; index++) receive(player, chunks.get(index));
         expectAck(player, nonce, "OK", SyncProtocol.digest(snapshot));
         assertActive(snapshot, "A", false);
+        check(player.messages.stream().anyMatch(text -> text.contains("Synced proxy item definitions")),
+                "Reload did not report accepted proxy definitions");
         ItemStack created = plugin.items().create(ACTIVE, player.player);
         check(created.getType() == Material.IRON_PICKAXE && plain(created.getItemMeta().displayName()).equals("Proxy A Tool"),
                 "Proxy definitions did not create real matching Paper metadata");
@@ -390,6 +413,37 @@ public final class ItemsSyncProbe extends JavaPlugin {
         receive(player, new SyncProtocol.Packet(SyncProtocol.Kind.CURRENT, fresh, before.digest(), 0, 0, new byte[0]));
         expectAck(player, fresh, "OK", before.digest());
         unchanged(before);
+        passed();
+    }
+
+    private void reload() {
+        player.messages.clear();
+        plugin.getCommand("planetryitems").execute(player.player, "pitems", new String[]{"reload"});
+    }
+
+    private void manualReloadResults() throws Exception {
+        stage = "reload confirms CURRENT only after authenticated response";
+        State before = state();
+        UUID nonce = seed(player, System.nanoTime());
+        reload();
+        check(player.messages.size() == 1 && player.messages.getFirst().contains("Syncing"),
+                "Reload pretended the proxy was already current");
+        receive(player, new SyncProtocol.Packet(SyncProtocol.Kind.CURRENT, nonce, before.digest(), 0, 0, new byte[0]));
+        check(player.messages.stream().anyMatch(text -> text.contains("already match the proxy")
+                && text.contains(before.digest().substring(0, 12))), "Reload did not confirm matching proxy revision");
+        unchanged(before);
+        passed();
+
+        stage = "reload rejection reports failure and retains the accepted pair";
+        nonce = seed(player, System.nanoTime());
+        reload();
+        var invalid = new SyncProtocol.Snapshot(3, utf8(items("B", true)), utf8("messages: {bad: [invalid]}"));
+        for (var chunk : SyncProtocol.chunks(nonce, invalid)) receive(player, chunk);
+        check(player.messages.stream().anyMatch(text -> text.contains("were rejected"))
+                && player.messages.stream().noneMatch(text -> text.contains("Synced proxy")),
+                "Reload did not report rejected proxy data accurately");
+        unchanged(before);
+        expectAck(player, nonce, "REJECTED", SyncProtocol.digest(invalid));
         passed();
     }
 
@@ -624,7 +678,7 @@ public final class ItemsSyncProbe extends JavaPlugin {
     }
     private void passed() { groups++; getLogger().info("PASS: " + stage); }
     private void succeed() {
-        check(groups == (phase.equals("cold") ? 15 : 2), "Acceptance group count differs");
+        check(groups == (phase.equals("cold") ? 18 : 2), "Acceptance group count differs");
         finished = true;
         getLogger().info("ITEMS_SYNC_PROBE_OK phase=" + phase + " groups=" + groups + "; controlled players/transport, no real clients");
         Bukkit.shutdown();
@@ -660,6 +714,8 @@ public final class ItemsSyncProbe extends JavaPlugin {
         final UUID id;
         final ItemStack[] contents = new ItemStack[43];
         final List<SyncProtocol.Packet> outgoing = new ArrayList<>();
+        final List<String> messages = new ArrayList<>();
+        boolean admin;
         final PersistentDataContainer data = new ItemStack(Material.PAPER).getItemMeta().getPersistentDataContainer();
         final Inventory enderChest = Bukkit.createInventory(null, InventoryType.ENDER_CHEST);
         final World world;
@@ -727,7 +783,8 @@ public final class ItemsSyncProbe extends JavaPlugin {
                 case "getPlayer" -> object;
                 case "isOnline", "isConnected", "isValid" -> online;
                 case "hasPlayedBefore" -> true;
-                case "isDead", "isSneaking", "isOp", "hasPermission", "isPermissionSet", "isGliding" -> false;
+                case "hasPermission", "isPermissionSet" -> admin && args[0].equals("planetry.admin.items");
+                case "isDead", "isSneaking", "isOp", "isGliding" -> false;
                 case "get" -> args[0].equals(Identity.UUID) ? Optional.of(id) : Optional.empty();
                 case "pointers" -> Pointers.builder().withStatic(Identity.UUID, id).build();
                 case "getPersistentDataContainer" -> data;
@@ -744,7 +801,15 @@ public final class ItemsSyncProbe extends JavaPlugin {
                     outgoing.add(SyncProtocol.decode((byte[]) args[2], secret));
                     yield null;
                 }
-                case "sendMessage", "updateInventory", "closeInventory", "saveData" -> null;
+                case "sendMessage" -> {
+                    if (args != null) for (Object argument : args) {
+                        if (argument instanceof Component component) messages.add(plain(component));
+                        else if (argument instanceof String text) messages.add(text);
+                        else if (argument instanceof String[] lines) messages.addAll(List.of(lines));
+                    }
+                    yield null;
+                }
+                case "updateInventory", "closeInventory", "saveData" -> null;
                 case "getEffectivePermissions" -> Set.of();
                 case "hashCode" -> System.identityHashCode(object);
                 case "equals" -> object == args[0];

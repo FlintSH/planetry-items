@@ -98,7 +98,6 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
             }
             refreshTicks = ticks;
             configurationLoaded = true;
-            proxyDefinitions.requestNow();
             return;
         }
         if (!data.resolve("lang.yml").toFile().exists()) saveResource("lang.yml", false);
@@ -174,8 +173,21 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
             try {
                 loadDefinitions();
                 policy.clear();
-                Bukkit.getOnlinePlayers().forEach(guard::beginSession);
-                message(sender, "messages.reloaded", Map.of());
+                if (proxyMode) {
+                    var completion = proxyDefinitions.refresh();
+                    if (!completion.isDone()) message(sender, "messages.proxy-sync-started", Map.of());
+                    completion.thenAccept(result -> {
+                        if (result == ProxyDefinitions.RefreshResult.UPDATED || result == ProxyDefinitions.RefreshResult.CURRENT)
+                            Bukkit.getOnlinePlayers().forEach(guard::beginSession);
+                        if (sender instanceof Player player && !player.isOnline()) return;
+                        message(sender, "messages.proxy-sync-" + result.name().toLowerCase(Locale.ROOT).replace('_', '-'),
+                                Map.of("revision", proxyDefinitions.currentDigest().isEmpty() ? "none"
+                                        : proxyDefinitions.currentDigest().substring(0, 12)));
+                    });
+                } else {
+                    Bukkit.getOnlinePlayers().forEach(guard::beginSession);
+                    message(sender, "messages.reloaded", Map.of());
+                }
             } catch (Exception error) {
                 getLogger().warning("Reload rejected. Check configuration; source and shared secret changes require a restart. Previous definitions retained.");
                 message(sender, "messages.reload-failed", Map.of("error", "Invalid configuration. See the server console."));

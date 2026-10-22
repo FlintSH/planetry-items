@@ -263,7 +263,233 @@ class ProxyDefinitionsTest {
         when(carrier.isOnline()).thenReturn(false);
         install(client, snapshot("disconnected"));
         assertEquals(0, validations.get());
+        assertFalse(client.requestPending());
+    }
+
+    @Test void manualRefreshBypassesPollDelayAndCompletesOnlyAfterDurableActivation() throws Exception {
+        var client = client();
+        client.start();
+        client.requestNow();
+        install(client, snapshot("old"));
+        now.set(TimeUnit.SECONDS.toNanos(2));
+        var completion = client.refresh();
+        assertEquals(2, requests());
+        assertFalse(completion.isDone());
+        assertEquals(ProxyDefinitions.RefreshResult.BUSY, client.refresh().join());
+        assertEquals(2, requests());
+        var next = snapshot(2, "next");
+        var notification = completion.thenAccept(result -> {
+            assertEquals(ProxyDefinitions.RefreshResult.UPDATED, result);
+            assertEquals(SyncProtocol.digest(next), client.currentDigest());
+            assertEquals(2, client.currentGeneration());
+            assertFalse(client.requestPending());
+        });
+        install(client, next);
+        notification.join();
+        assertEquals(ProxyDefinitions.RefreshResult.UPDATED, completion.join());
+        assertSnapshot(next, active.get());
+        assertSnapshot(next, SnapshotCache.load(cache).orElseThrow());
+    }
+
+    @Test void manualRefreshObservesExistingPollAndDistinguishesAlreadyCurrent() {
+        var client = client();
+        client.start();
+        client.requestNow();
+        var completion = client.refresh();
+        assertEquals(1, requests());
+        install(client, snapshot("known"));
+        assertEquals(ProxyDefinitions.RefreshResult.UPDATED, completion.join());
+        now.set(TimeUnit.SECONDS.toNanos(2));
+        var currentCompletion = client.refresh();
+        deliver(client, current(latestRequest().request(), client.currentDigest()));
+        assertEquals(ProxyDefinitions.RefreshResult.CURRENT, currentCompletion.join());
+        assertEquals(1, activations.get());
+    }
+
+    @Test void manualRefreshReportsRejectionAndPersistenceFailureWithoutChangingActivePair() throws Exception {
+        var old = snapshot("old");
+        SnapshotCache.store(cache, old);
+        byte[] original = Files.readAllBytes(cache);
+        var client = client((file, snapshot) -> { throw new IOException("write failed"); });
+        assertTrue(client.initializeFromCache());
+        client.start();
+        var invalid = client.refresh();
+        install(client, new SyncProtocol.Snapshot(2, bytes("items"), bytes("invalid")));
+        assertEquals(ProxyDefinitions.RefreshResult.REJECTED, invalid.join());
+        now.set(TimeUnit.SECONDS.toNanos(2));
+        var failedWrite = client.refresh();
+        install(client, snapshot(2, "valid"));
+        assertEquals(ProxyDefinitions.RefreshResult.REJECTED, failedWrite.join());
+        assertSnapshot(old, active.get());
+        assertEquals(SyncProtocol.digest(old), client.currentDigest());
+        assertArrayEquals(original, Files.readAllBytes(cache));
+    }
+
+    @Test void manualRefreshReportsTimeoutOnceAndIgnoresLateReplyWhilePollingResumes() {
+        var client = client();
+        client.start();
+        var completion = client.refresh();
+        UUID nonce = latestRequest().request();
+        now.set(TimeUnit.SECONDS.toNanos(10));
+        client.requestNow();
+        assertEquals(ProxyDefinitions.RefreshResult.TIMED_OUT, completion.join());
+        assertEquals(2, requests());
+        deliver(client, SyncProtocol.chunks(nonce, snapshot("late")).getFirst());
+        assertEquals(0, activations.get());
         assertTrue(client.requestPending());
+        install(client, snapshot("fresh"));
+        assertTrue(client.ready());
+        assertEquals(ProxyDefinitions.RefreshResult.TIMED_OUT, completion.join());
+    }
+
+    @Test void manualRefreshReportsMissingCarrierDisconnectShutdownAndSendFailure() {
+        var client = client();
+        assertEquals(ProxyDefinitions.RefreshResult.STOPPED, client.refresh().join());
+        client.start();
+        doReturn(List.of()).when(server).getOnlinePlayers();
+        assertEquals(ProxyDefinitions.RefreshResult.NO_CARRIER, client.refresh().join());
+        assertEquals(0, requests());
+        doReturn(List.of(carrier)).when(server).getOnlinePlayers();
+        var disconnected = client.refresh();
+        when(carrier.isOnline()).thenReturn(false);
+        client.requestNow();
+        assertEquals(ProxyDefinitions.RefreshResult.DISCONNECTED, disconnected.join());
+        when(carrier.isOnline()).thenReturn(true);
+        now.set(TimeUnit.SECONDS.toNanos(2));
+        var stopped = client.refresh();
+        client.close();
+        assertEquals(ProxyDefinitions.RefreshResult.STOPPED, stopped.join());
+        assertFalse(client.requestPending());
+        var failed = client();
+        failed.start();
+        doThrow(new IllegalStateException("disconnected")).when(carrier)
+                .sendPluginMessage(eq(plugin), eq(SyncProtocol.CHANNEL), any(byte[].class));
+        assertEquals(ProxyDefinitions.RefreshResult.SEND_FAILED, failed.refresh().join());
+        assertFalse(failed.requestPending());
+    }
+
+    @Test void lostAckDoesNotTurnSuccessfulManualRefreshIntoFailure() {
+        var client = client();
+        client.start();
+        var completion = client.refresh();
+        doThrow(new IllegalStateException("ack lost")).when(carrier)
+                .sendPluginMessage(eq(plugin), eq(SyncProtocol.CHANNEL), any(byte[].class));
+        install(client, snapshot("valid"));
+        assertEquals(ProxyDefinitions.RefreshResult.UPDATED, completion.join());
+        assertTrue(client.ready());
+        assertEquals(1, activations.get());
+    }
+
+    @Test void rapidManualRefreshWaitsForProxyRateLimitAndStillSendsBeforeFiveSecondPoll() {
+        var client = client();
+        client.start();
+        client.requestNow();
+        install(client, snapshot("known"));
+        var completion = client.refresh();
+        assertFalse(completion.isDone());
+        assertEquals(1, requests());
+        assertEquals(ProxyDefinitions.RefreshResult.BUSY, client.refresh().join());
+        var delayed = ArgumentCaptor.forClass(Runnable.class);
+        verify(scheduler).runTaskLater(eq(plugin), delayed.capture(), eq(25L));
+        now.set(TimeUnit.MILLISECONDS.toNanos(1250));
+        delayed.getValue().run();
+        assertEquals(2, requests());
+        deliver(client, current(latestRequest().request(), client.currentDigest()));
+        assertEquals(ProxyDefinitions.RefreshResult.CURRENT, completion.join());
+    }
+
+    @Test void queuedManualRefreshStopsOnCloseWithoutSendingAnotherRequest() {
+        var client = client();
+        client.start();
+        client.requestNow();
+        install(client, snapshot("known"));
+        var delayedTask = mock(BukkitTask.class);
+        when(scheduler.runTaskLater(eq(plugin), any(Runnable.class), anyLong())).thenReturn(delayedTask);
+        var completion = client.refresh();
+        client.close();
+        assertEquals(ProxyDefinitions.RefreshResult.STOPPED, completion.join());
+        verify(delayedTask).cancel();
+        assertEquals(1, requests());
+    }
+
+    @Test void manualRefreshAlsoSpacesRequestsFromDelayedAuthenticatedResponses() {
+        var client = client();
+        client.start();
+        client.requestNow();
+        now.set(TimeUnit.SECONDS.toNanos(2));
+        install(client, snapshot("delayed"));
+        var completion = client.refresh();
+        assertEquals(1, requests());
+        var delayed = ArgumentCaptor.forClass(Runnable.class);
+        verify(scheduler).runTaskLater(eq(plugin), delayed.capture(), eq(25L));
+        now.set(TimeUnit.MILLISECONDS.toNanos(3250));
+        delayed.getValue().run();
+        assertEquals(2, requests());
+        deliver(client, current(latestRequest().request(), client.currentDigest()));
+        assertEquals(ProxyDefinitions.RefreshResult.CURRENT, completion.join());
+    }
+
+    @Test void notificationExceptionCannotRejectAlreadyCommittedRefresh() {
+        var client = client();
+        client.start();
+        var completion = client.refresh();
+        var notification = completion.thenAccept(result -> { throw new IllegalStateException("recipient failed"); });
+        install(client, snapshot("accepted"));
+        assertEquals(ProxyDefinitions.RefreshResult.UPDATED, completion.join());
+        assertTrue(notification.isCompletedExceptionally());
+        assertTrue(client.ready());
+        assertEquals(1, activations.get());
+        assertEquals("OK", text(outgoing.getLast().payload()));
+        verify(logger, never()).warning(contains("rejected"));
+    }
+
+    @Test void timeoutCallbackCanCloseWithoutOuterPollSendingAfterShutdown() {
+        var client = client();
+        client.start();
+        var completion = client.refresh();
+        var notification = completion.thenAccept(result -> client.close());
+        now.set(TimeUnit.SECONDS.toNanos(10));
+        client.requestNow();
+        notification.join();
+        assertEquals(ProxyDefinitions.RefreshResult.TIMED_OUT, completion.join());
+        assertEquals(1, requests());
+        assertEquals(ProxyDefinitions.RefreshResult.STOPPED, client.refresh().join());
+    }
+
+    @Test void disconnectedCallbackRetryCannotBeOverwrittenByOuterRefresh() {
+        var client = client();
+        client.start();
+        var first = client.refresh();
+        var retry = new AtomicReference<java.util.concurrent.CompletableFuture<ProxyDefinitions.RefreshResult>>();
+        var notification = first.thenAccept(result -> {
+            when(carrier.isOnline()).thenReturn(true);
+            retry.set(client.refresh());
+        });
+        when(carrier.isOnline()).thenReturn(false);
+        assertEquals(ProxyDefinitions.RefreshResult.BUSY, client.refresh().join());
+        notification.join();
+        assertEquals(ProxyDefinitions.RefreshResult.DISCONNECTED, first.join());
+        assertNotNull(retry.get());
+        assertFalse(retry.get().isDone());
+        var delayed = ArgumentCaptor.forClass(Runnable.class);
+        verify(scheduler).runTaskLater(eq(plugin), delayed.capture(), eq(25L));
+        now.set(TimeUnit.MILLISECONDS.toNanos(1250));
+        delayed.getValue().run();
+        assertEquals(2, requests());
+        install(client, snapshot("retry"));
+        assertEquals(ProxyDefinitions.RefreshResult.UPDATED, retry.get().join());
+    }
+
+    @Test void timeoutCallbackCanCloseWithoutOuterRefreshQueuingAfterShutdown() {
+        var client = client();
+        client.start();
+        var first = client.refresh();
+        var notification = first.thenAccept(result -> client.close());
+        now.set(TimeUnit.SECONDS.toNanos(10));
+        assertEquals(ProxyDefinitions.RefreshResult.STOPPED, client.refresh().join());
+        notification.join();
+        assertEquals(1, requests());
+        verify(scheduler, never()).runTaskLater(eq(plugin), any(Runnable.class), anyLong());
     }
 
     @Test void invalidSecondDocumentRetainsActivePairAndExactLastGoodCacheWithoutLoggingSecret() throws Exception {

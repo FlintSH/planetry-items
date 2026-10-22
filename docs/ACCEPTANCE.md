@@ -201,6 +201,15 @@ unknown transferred-ID preservation and later metadata/durability migration.
 Unit tests cover nonce generation/polling, bounded parsing, authentication,
 assembly and atomic-cache failure paths.
 
+Reload regressions cover a manual request before the normal five-second poll,
+the proxy's one-second rate limit, an in-flight poll, bounded repeated commands,
+confirmed update/current results, rejection/cache-write failure, no carrier,
+disconnect, timeout, shutdown and lost ACK retention. Real Paper command probes
+check backend permission denial, missing-carrier feedback, pending/busy replies,
+paired activation confirmation and current/rejected results. Transport requests
+remain seeded in this fixture; request generation and delayed sends use unit
+tests. They do not prove connected-client Velocity transport.
+
 Also run both original smoke.py modes so existing gameplay, readiness and the
 issue19 network grant API remain covered. These fixtures are not connected-client
 transport tests. Stage actual proxy/Purpur, Nexo/AuraSkills/resource packs,

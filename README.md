@@ -80,7 +80,7 @@ There is no requirements bypass permission.
 | `/planetryitems info` | Show all held-item settings, effective model/material, attributes, bonuses and requirements |
 | `/planetryitems soulboundbypass` | Staff player only; toggle the confirmed soulbound drop override, off by default |
 | `/migrate` | Public, player-only inventory update; no permission; two-hour cooldown |
-| `/planetryitems reload` | Validate and reload all item and language files together |
+| `/planetryitems reload` | Reload local files, or sync this backend with the proxy's active definitions and language in proxy mode |
 
 Optional network staff commands can use the plugin's bounded item-ID lookup and
 atomic grant API through a compatible Paper bridge. PlanetryItems still runs on
@@ -95,6 +95,15 @@ death. While enabled, the first explicit drop warns; a second drop of the
 identical item and amount within two seconds permits that drop once. It
 does not allow external storage, placement or death drops, or bypass item
 requirements. See [the warning and command details](docs/OPERATIONS.md#commands-and-permissions).
+
+In proxy mode, `/pitems reload` reports syncing, then confirms an updated or
+already matching revision only after the proxy responds. Failed syncs retain
+the last good definitions; an empty backend reports that a player must connect.
+Reload observes an in-flight poll or requests an update without waiting for the
+normal five-second poll, while respecting the proxy's request rate limit.
+Edit proxy files and run `/piv reload` first to publish them. `/pitems reload`
+syncs the current backend with that published revision; use `/piv status` to
+check the other backends. See [reload details](docs/OPERATIONS.md#reload-and-recover).
 
 Back up the item definitions before changing IDs or durability.
 Migration rebuilds definition-owned material, texture, model, name, lore, equipment,

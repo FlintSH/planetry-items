@@ -89,7 +89,7 @@ def write_local_sentinels(folder, revision):
 
 
 def run_server(java, work, phase, log_file, timeout):
-    groups = {"cold": 15, "restart": 2}[phase]
+    groups = {"cold": 18, "restart": 2}[phase]
     marker = f"ITEMS_SYNC_PROBE_OK phase={phase} groups={groups};"
     process = subprocess.Popen(
         [str(java), "-Xms256m", "-Xmx768m", f"-Dplanetry.syncProbe.phase={phase}",
@@ -203,7 +203,7 @@ def main():
                 arguments.log_file.stem + ".restart" + arguments.log_file.suffix)
         run_server(java, work, "restart", restart_log, arguments.timeout)
     print("PASS: packaged PlanetryItems proxy sync on Paper 26.1.2 build 74; "
-          "15 cold + 2 restart groups: cold/no-proxy and full-storage preservation, "
+          "18 cold + 2 restart groups: cold/no-proxy and full-storage preservation, "
           "signed multipart updates, generation fencing, last-good rejection, cache restart; "
           "real stacks/server lifecycle, controlled players and transport")
 

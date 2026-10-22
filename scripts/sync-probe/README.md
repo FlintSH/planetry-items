@@ -11,7 +11,7 @@ Maven must first produce `target/test-classpath.txt`. The runner checks the pinn
 Paper 26.1.2 build 74 digest, compiles this directory separately, and starts two
 owned server processes sequentially in one temporary loopback folder. Cold startup
 checks missing-proxy preservation, signed multipart updates, rejection/replay,
-future item migration and persistence across 15 assertion groups. Snapshot A is
+future item migration and persistence across 18 assertion groups. Snapshot A is
 generation 1 with a durability maximum of 100; B is generation 2 with a maximum
 of 300. A known-ID item arriving from generation 2 with 200 remaining must retain
 its metadata, generation and durability through stale refresh, direct migration,
@@ -20,6 +20,8 @@ its active definition with 200 remaining. Separate full-storage players check
 that unknown helmets and known future chest armor retain their worn slots and
 quantities while native attributes are suspended. Their world fixtures count
 and reject every drop callback.
+
+Reload probes check permission denial, missing-carrier feedback, a bounded pending command, confirmed update/current responses and rejected-update retention through the registered command and messenger.
 
 Invalid content uses higher generations so material/language validation is
 actually reached. Fresh authenticated requests separately reject an older
