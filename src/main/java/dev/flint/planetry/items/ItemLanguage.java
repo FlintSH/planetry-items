@@ -211,7 +211,9 @@ public final class ItemLanguage {
                                 TagResolver glyphResolver, Pointered target) {
         var result = new ArrayList<Component>();
         String typeKey = "types." + definition.type().toLowerCase(Locale.ROOT);
-        result.add(render(templates.getOrDefault(typeKey, "<gray>" + smallCaps(definition.type())), Map.of(), glyphResolver, target));
+        Component type = render(templates.getOrDefault(typeKey, "<gray>" + smallCaps(definition.type())), Map.of(), glyphResolver, target);
+        if (definition.soulbound()) type = type.append(text("lore.soulbound", Map.of(), glyphResolver, target));
+        result.add(type);
 
         var flavor = new ArrayList<Component>();
         List<String> flavorLines = definition.lore();

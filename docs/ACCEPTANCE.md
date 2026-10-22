@@ -59,6 +59,9 @@ placement, incoming/outgoing inventory routes, nested carriers and bundle unload
 vetoes, exact drop confirmations and cursor recovery. Recovery includes a queue
 larger than storage, incremental capacity, readiness delays and corrupt old data
 with an independently saved new cursor.
+Soulbound label probes check the same-line suffix, exact purple label colour,
+ordinary/placement-only controls, serialization, old-item migration, repeated
+refresh, flag changes in both directions and custom type/suffix translations.
 
 Before live installation, the operator should test on staging with the same
 Paper/Purpur version, actual Nexo1.22+/resource pack, AuraSkills2.4.0, PlanetryCore,
@@ -67,6 +70,8 @@ Inventory Sync and protection plugins used by the network:
 1. Give every configured item to two players with different game/skill levels.
    Check glyph fonts, models, head textures, small type labels, attribute colours,
    one blank between sections, hidden met requirements and red final durability.
+   Soulbound items must show ` • ѕᴏᴜʟʙᴏᴜɴᴅ` after the type on the same line,
+   with the label in `#B589D6`; ordinary items must have no suffix or separator.
 2. Try both hands, shift/number/drag equipment moves, right-click equip, dispensers,
    reconnects, death/respawn and full storage. Confirm denied items give no passive
    modifiers and cannot be used; losing a requirement moves worn items to storage.
@@ -88,8 +93,9 @@ Inventory Sync and protection plugins used by the network:
    `planetry-soulbound: false`. Test unquoted `true`/`false` at the item root and
    under `bonuses`; reject quoted strings, numbers, blank/null values and duplicate
    declarations across both locations without changing the active catalog. Check
-   `/pitems info` shows both effective flags and neither adds automatic lore/stat
-   lines. Keep the six example IDs unchanged when copying the staff catalog.
+   `/pitems info` shows both effective flags. Soulbound adds only its configured
+   type-line suffix; canplace adds no lore, and neither creates numeric stats.
+   Keep the six example IDs unchanged when copying the staff catalog.
 7. With `planetry-canplace: false`, test both hands for block placement, entity
    placement, hanging items and bucket contents. Every blocked placement must be
    silent and spend neither the item nor custom durability. Repeat with ordinary

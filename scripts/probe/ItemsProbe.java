@@ -538,23 +538,55 @@ public final class ItemsProbe extends JavaPlugin {
         var boundKey = new NamespacedKey(plugin, "soulbound");
         var placeKey = new NamespacedKey(plugin, "can_place");
         var foreign = new NamespacedKey("foreign", "policy-probe");
+        String common = integrations ? "GLYPH[tag_common]" : "COMMON";
+        check(lore(bound).equals(List.of("ɪᴛᴇᴍ • ѕᴏᴜʟʙᴏᴜɴᴅ", "", common)),
+                "Soulbound suffix changed type-line spacing or added a separate lore section: " + lore(bound));
+        check(coloredText(bound.getItemMeta().lore().getFirst(), -1, "ѕᴏᴜʟʙᴏᴜɴᴅ", 0xB589D6),
+                "Soulbound label did not use #B589D6");
+        check(lore(noPlace).getFirst().equals("ɪᴛᴇᴍ"), "Placement-only item gained a soulbound suffix");
         check(bound.getPersistentDataContainer().get(boundKey, PersistentDataType.BYTE) == 1, "Soulbound PDC missing");
         check(noPlace.getPersistentDataContainer().get(placeKey, PersistentDataType.BYTE) == 0, "Can-place PDC missing");
-        check((boolean) call(items, "soulbound", ItemStack.deserializeBytes(bound.serializeAsBytes())), "Serialized flag lost");
+        ItemStack serializedBound = ItemStack.deserializeBytes(bound.serializeAsBytes());
+        check((boolean) call(items, "soulbound", serializedBound), "Serialized flag lost");
+        check(lore(serializedBound).equals(lore(bound))
+                && coloredText(serializedBound.getItemMeta().lore().getFirst(), -1, "ѕᴏᴜʟʙᴏᴜɴᴅ", 0xB589D6),
+                "Serialization lost the soulbound type label or colour");
         bound.editPersistentDataContainer(data -> { data.remove(boundKey); data.set(foreign, PersistentDataType.STRING, "keep"); });
+        bound.editMeta(meta -> meta.lore(List.of(Component.text("Legacy tooltip"))));
         check((boolean) call(items, "soulbound", bound), "Old item without flag ignored current definition");
         ItemStack migrated = (ItemStack) call(items, "migrate", bound, player.player);
         check(migrated.getPersistentDataContainer().get(boundKey, PersistentDataType.BYTE) == 1
                 && "keep".equals(migrated.getPersistentDataContainer().get(foreign, PersistentDataType.STRING)), "Flag migration lost data");
+        check(lore(migrated).equals(List.of("ɪᴛᴇᴍ • ѕᴏᴜʟʙᴏᴜɴᴅ", "", common)), "Old item migration missed soulbound label");
+        call(items, "refresh", migrated, player.player);
+        call(items, "refresh", migrated, player.player);
+        check(lore(migrated).equals(lore(serializedBound)), "Repeated refresh duplicated the soulbound suffix");
         Files.writeString(file, definitions.replace("planetry-soulbound: true", "planetry-soulbound: false")
                 .replace("planetry-canplace: false", "planetry-canplace: true"), StandardCharsets.UTF_8);
         command.execute(player.player, "pitems", new String[]{"reload"});
         check(!(boolean) call(items, "soulbound", migrated) && (boolean) call(items, "canPlace", noPlace), "Reload did not override saved flags");
+        call(items, "refresh", migrated, player.player);
+        check(lore(migrated).equals(List.of("ɪᴛᴇᴍ", "", common)), "Disabling soulbound left its label or separator");
         Files.writeString(file, definitions, StandardCharsets.UTF_8);
         command.execute(player.player, "pitems", new String[]{"reload"});
         check((boolean) call(items, "soulbound", bound) && !(boolean) call(items, "canPlace", noPlace), "Reload flags not immediately enforced");
         bound = migrated;
         call(items, "refresh", bound, player.player);
+        check(lore(bound).equals(lore(serializedBound)), "Enabling soulbound did not restore its type label");
+
+        var languageFile = plugin.getDataFolder().toPath().resolve("lang.yml");
+        String originalLanguage = Files.readString(languageFile, StandardCharsets.UTF_8);
+        try {
+            Files.writeString(languageFile, originalLanguage + "\ntypes:\n  item: '<gold>Relic'\nlore:\n  soulbound: '<gray> / <light_purple>Bound'\n", StandardCharsets.UTF_8);
+            command.execute(player.player, "pitems", new String[]{"reload"});
+            call(items, "refresh", bound, player.player);
+            check(lore(bound).getFirst().equals("Relic / Bound"), "Custom type/soulbound translations not applied");
+            check(lore(create("policy_noplace")).getFirst().equals("Relic"), "Custom suffix appeared on an ordinary item");
+        } finally {
+            Files.writeString(languageFile, originalLanguage, StandardCharsets.UTF_8);
+            command.execute(player.player, "pitems", new String[]{"reload"});
+            call(items, "refresh", bound, player.player);
+        }
         passed();
 
         stage = "silent placement veto in both hands with no durability cost";
@@ -1469,6 +1501,12 @@ public final class ItemsProbe extends JavaPlugin {
     private static String plain(Component value) { return value == null ? "" : PlainTextComponentSerializer.plainText().serialize(value); }
     private static boolean contains(List<String> values, String needle) { return values.stream().anyMatch(value -> value.contains(needle)); }
     private static boolean red(Component component) { return NamedTextColor.RED.equals(component.color()) || component.children().stream().anyMatch(ItemsProbe::red); }
+    private static boolean coloredText(Component component, int inherited, String text, int expected) {
+        int color = component.color() == null ? inherited : component.color().value();
+        return component instanceof net.kyori.adventure.text.TextComponent literal
+                && literal.content().equals(text) && color == expected
+                || component.children().stream().anyMatch(child -> coloredText(child, color, text, expected));
+    }
     private static boolean nameColor(Component component, int inherited, int expected) {
         int color = component.color() == null ? inherited : component.color().value();
         if (component instanceof net.kyori.adventure.text.TextComponent text && !text.content().isEmpty()

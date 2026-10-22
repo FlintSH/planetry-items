@@ -22,7 +22,7 @@ default unless you explicitly request italics.
 
 Lore sections appear in this fixed order:
 
-1. Type label.
+1. Type label, followed by the soulbound indicator when enabled for the item.
 2. Flavour lore from the item.
 3. Configured Minecraft attributes, then bonuses.
 4. Unmet requirements.
@@ -33,9 +33,18 @@ Nonempty sections have one blank line between them. Durability follows rarity
 without an extra section gap. Flavour lore trims leading/trailing blank lines
 but retains interior blank lines. Met requirements disappear for the holder.
 Removing a requirement's text does not remove its gameplay restriction.
-`planetry-canplace` and `planetry-soulbound` add no automatic lore or stat
-lines, including when configured under `bonuses`. Add explanatory flavour
-lore yourself if players should see those policies.
+`planetry-soulbound: true` appends ` • ѕᴏᴜʟʙᴏᴜɴᴅ` to the type line, with
+a gray separator and the label in `#B589D6`. False or omitted flags add no
+suffix or separator. This also applies when the flag is under `bonuses`.
+`planetry-canplace` adds no automatic lore or stat line.
+
+The suffix uses `lore.soulbound`, whose default is
+`'<gray> • <#B589D6>ѕᴏᴜʟʙᴏᴜɴᴅ'`, including its leading space and separator.
+
+Existing language files receive this default without edits and retain their
+custom `types.*` labels. Override the suffix to translate it, or use `''` to
+hide it; the soulbound restrictions still apply. Reload with `/pitems reload`.
+Existing items update through the normal inventory refresh or `/migrate`.
 
 Rarity sets the complete display-name color: COMMON gray, UNCOMMON green,
 RARE aqua, EPIC `#9554EA`, LEGENDARY `#FFBF00`, MYTHICAL red. Color tags in
@@ -53,6 +62,7 @@ Changing `rarities.*` only changes the rarity lore line.
 | `requirement-labels.default`, `requirement-labels.<key>` | Plain labels in denial messages and info | `{requirement}`, `{value}` |
 | `rarities.common`, `.uncommon`, `.rare`, `.epic`, `.legendary`, `.mythical` | Rarity lore | None |
 | `glyph-fallbacks.<glyph-id>` | Text when no working native glyph is supplied | No dynamic values |
+| `lore.soulbound` | Suffix on the type line for soulbound items, including separator | None |
 | `lore.durability`, `lore.durability-low` | Normal/final-10% durability | `{current}`, `{max}` |
 | `messages.<key>` | Command/event text | See below |
 
@@ -156,6 +166,8 @@ into existing sections instead of adding duplicate YAML headings:
 
 ```yaml
 schema-version: 1
+lore:
+  soulbound: '<gray> • <#B589D6>ѕᴏᴜʟʙᴏᴜɴᴅ'
 attributes:
   planetry-oxygen: '<aqua>Oxygen <white>{value}'
 requirement-labels:

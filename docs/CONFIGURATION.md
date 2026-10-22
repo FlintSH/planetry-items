@@ -74,7 +74,9 @@ Use unquoted YAML `true` or `false` for `planetry-canplace` and
 values are invalid. Each flag may appear at the item's root or under
 `bonuses`, once per item. Defining the same flag in both places rejects the
 whole reload, even when the values agree. These are policy flags; do not put
-them under Minecraft `attributes`. They add no automatic lore or stat lines.
+them under Minecraft `attributes`. Neither creates numeric stats.
+Soulbound adds the [configurable type-line suffix](LANGUAGE.md#formatting-and-lore-layout);
+canplace adds no lore.
 
 For example, these settings belong inside an existing item definition:
 

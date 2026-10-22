@@ -89,7 +89,8 @@ release does not consume it. Prefer the service methods for item changes so
 metadata, lore and native components stay consistent. Do not treat a raw ID
 alone as proof that its definition remains valid or the item is usable.
 The active definition controls policy for recognized items; saved policy flags
-travel with serialized stacks. They do not add automatic lore.
+travel with serialized stacks. Soulbound adds the configurable `lore.soulbound`
+suffix to the type line; canplace adds no lore. Neither creates numeric stats.
 
 ## Releases and contributions
 

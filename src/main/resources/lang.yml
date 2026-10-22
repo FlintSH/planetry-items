@@ -61,6 +61,8 @@ glyph-fallbacks:
   tag_mythical: '<red>MYTHICAL'
 
 lore:
+  # Appended to the type line only for soulbound items; includes its separator.
+  soulbound: '<gray> • <#B589D6>ѕᴏᴜʟʙᴏᴜɴᴅ'
   durability: '<gray>Durability: {current}/{max}'
   durability-low: '<gray>Durability: <red>{current}<gray>/{max}'
 

@@ -3,7 +3,8 @@
 # Configuration is validated completely before a reload replaces the active catalog.
 # Optional boolean policy flags: planetry-canplace defaults to true and
 # planetry-soulbound defaults to false. They also work under bonuses, but each
-# flag must appear in only one location. They do not add automatic lore lines.
+# flag must appear in only one location. Soulbound adds the configurable type-line
+# suffix; canplace adds no lore. Neither creates numeric stats.
 schema-version: 1
 items:
   lunar_crystal:

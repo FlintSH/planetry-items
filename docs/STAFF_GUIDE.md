@@ -171,8 +171,9 @@ containing them are retained; ordinary items follow normal death rules.
 Both flags accept only unquoted YAML `true` or `false`. Defaults are
 `planetry-canplace: true` and `planetry-soulbound: false`. Put each at the item
 root or under `bonuses`, once per flag; repeating a flag across both locations
-rejects reload. They are policy flags with no automatic lore, not numeric
-Minecraft attributes. The example `staff_keepsake` demonstrates both locations.
+rejects reload. Neither creates numeric stats. Soulbound adds the configurable
+` • ѕᴏᴜʟʙᴏᴜɴᴅ` type-line suffix; canplace adds no lore.
+The example `staff_keepsake` demonstrates both locations.
 Bundles/container items with nested soulbound contents receive the same
 protection. Read [the policy reference](CONFIGURATION.md#placement-and-soulbound-policies)
 before applying it to existing items.

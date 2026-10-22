@@ -201,7 +201,8 @@ the same way. Do not configure the same normalized attribute twice.
 `planetry-canplace` (default `true`) and `planetry-soulbound` (default `false`)
 are boolean policy flags. Use unquoted `true` or `false` at the item root or
 under `bonuses`, once per flag; duplicates across both locations reject reload.
-They are not numeric Minecraft attributes and add no automatic lore.
+They do not create numeric stats. Soulbound adds the configurable type-line
+indicator described [below](#lore-and-durability); canplace adds no lore.
 `planetry-canplace: false` silently blocks world placement from either hand,
 including blocks, entities, hanging items and buckets, without consuming the
 item or durability. Soulbound items also cannot be placed, dropped or written
@@ -254,6 +255,11 @@ with no optional sections has only one blank between type and rarity. All types,
 attribute prefixes, requirement lines, rarity output and durability messages are
 editable in `lang.yml`. Values appear on separate lines, with white signed values
 by default. Dynamic message substitutions cannot inject MiniMessage formatting.
+
+Soulbound items show ` • ѕᴏᴜʟʙᴏᴜɴᴅ` after the type on the same line, with the
+label in `#B589D6`. Ordinary items omit the suffix and separator. The suffix is
+editable through `lore.soulbound` in `lang.yml`; existing language files receive
+the default automatically. See [language settings](docs/LANGUAGE.md).
 
 Items default to 100 durability and stack size 1. Set `max-durability: 0` for no
 counter, or `unbreakable: true` to retain an item without spending durability. Unbreakable

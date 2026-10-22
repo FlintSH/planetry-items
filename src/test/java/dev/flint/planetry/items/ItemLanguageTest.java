@@ -30,12 +30,48 @@ class ItemLanguageTest {
         assertEquals(List.of("ɪᴛᴇᴍ", "", "COMMON"), plain(language("").lore(item, 0, Set.of(), null)));
     }
 
-    @Test void policyFlagsDoNotAddAutomaticLoreLines() throws Exception {
+    @Test void soulboundSuffixSharesTheTypeLineForBothFlagLocations() throws Exception {
         for (String settings : List.of("planetry-canplace: false\nplanetry-soulbound: true\n",
                 "bonuses:\n  planetry-canplace: false\n  planetry-soulbound: true\n")) {
             var item = item("max-durability: 0\n" + settings);
-            assertEquals(List.of("ɪᴛᴇᴍ", "", "COMMON"), plain(language("").lore(item, 0, Set.of(), null)));
+            var lore = language("").lore(item, 0, Set.of(), null);
+            assertEquals(List.of("ɪᴛᴇᴍ • ѕᴏᴜʟʙᴏᴜɴᴅ", "", "COMMON"), plain(lore));
+            assertEquals(TextDecoration.State.FALSE, lore.getFirst().decoration(TextDecoration.ITALIC));
+            var suffix = lore.getFirst().children().getLast();
+            assertEquals(" • ѕᴏᴜʟʙᴏᴜɴᴅ", PLAIN.serialize(suffix));
+            assertEquals(NamedTextColor.GRAY, suffix.color());
+            assertTrue(hasColor(suffix, TextColor.color(0xB589D6)));
         }
+    }
+
+    @Test void nonSoulboundItemsOmitTheSuffixAndSeparator() throws Exception {
+        var lang = language("");
+        for (String settings : List.of("", "planetry-canplace: false\n", "planetry-soulbound: false\n",
+                "bonuses:\n  planetry-soulbound: false\n")) {
+            assertEquals(List.of("ɪᴛᴇᴍ", "", "COMMON"),
+                    plain(lang.lore(item("max-durability: 0\n" + settings), 0, Set.of(), null)));
+        }
+    }
+
+    @Test void retainedTypeTranslationsReceiveTheDefaultSoulboundSuffixForEveryType() throws Exception {
+        var lang = language("types:\n  weapon: '<gold><bold>Custom Weapon'\n");
+        var labels = Map.of("ITEM", "ɪᴛᴇᴍ", "TOOL", "ᴛᴏᴏʟ", "WEAPON", "Custom Weapon",
+                "ARMOUR", "ᴀʀᴍᴏᴜʀ", "FOOD", "ꜰᴏᴏᴅ", "COSMETIC", "ᴄᴏѕᴍᴇᴛɪᴄ", "ADDON", "ᴀᴅᴅᴏɴ", "SPACESUIT", "ѕᴘᴀᴄᴇѕᴜɪᴛ");
+        for (var entry : labels.entrySet()) {
+            var item = item("type: " + entry.getKey() + "\nplanetry-soulbound: true\n");
+            var line = lang.lore(item, 100, Set.of(), null).getFirst();
+            assertEquals(entry.getValue() + " • ѕᴏᴜʟʙᴏᴜɴᴅ", PLAIN.serialize(line));
+            assertTrue(hasColor(line, TextColor.color(0xB589D6)));
+            if (entry.getKey().equals("WEAPON")) assertEquals(NamedTextColor.GOLD, line.color());
+        }
+    }
+
+    @Test void soulboundSuffixCanBeTranslatedOrHiddenWithoutChangingTheType() throws Exception {
+        var bound = item("type: WEAPON\nplanetry-soulbound: true\nmax-durability: 0\n");
+        var translated = language("types:\n  weapon: '<aqua>Blade'\nlore:\n  soulbound: '<gray> / <light_purple>Bound'\n");
+        assertEquals(List.of("Blade / Bound", "", "COMMON"), plain(translated.lore(bound, 0, Set.of(), null)));
+        var hidden = language("lore:\n  soulbound: ''\n");
+        assertEquals(List.of("ᴡᴇᴀᴘᴏɴ", "", "COMMON"), plain(hidden.lore(bound, 0, Set.of(), null)));
     }
 
     @Test void retainedLanguageFilesReceiveSoulboundMessageDefaults() throws Exception {
