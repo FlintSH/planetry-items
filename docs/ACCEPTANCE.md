@@ -86,6 +86,22 @@ Special-tool controls cover both hands and positive/cancelled/zero native wear.
 The actual native empty-stack conversion of each exhausted control stick must
 return an ordinary fishing rod without reviving custom identity or metadata.
 
+Network API regressions validate the reflected instance-method signatures,
+bounded immutable sorted completions, prefix/ID limits and reload snapshots.
+The same packaged Paper probes in both optional-hook modes grant actual
+ItemStacks through the API, including 1/2304 limits, exact split quantities,
+recipient notices, retained requirements and soulbound/placement policies.
+They reject malformed requests, offline/dead/invalid and replaced sessions,
+off-thread calls, unavailable Nexo sources and full inventories. A partial merge
+followed by overflow must preserve every live stack, armour/offhand and cursor.
+Controlled Inventory Sync callbacks revoke readiness, replace the UUID session
+or change storage during preparation; the write must refuse each case.
+Installed disabled Inventory Sync also refuses API grants.
+Injected reconciliation/notification failures retain one successful grant;
+an inventory write that applies then throws must propagate an uncertain outcome
+without a definite failure status or retry. Unit tests cover the same failure
+boundaries without claiming real ItemStack behavior.
+
 Before live installation, the operator should test on staging with the same
 Paper/Purpur version, actual Nexo1.22+/resource pack, AuraSkills2.4.0, PlanetryCore,
 Inventory Sync and protection plugins used by the network:

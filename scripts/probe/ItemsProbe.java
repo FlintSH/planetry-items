@@ -56,6 +56,7 @@ public final class ItemsProbe extends JavaPlugin {
         after(1, () -> {
             plugin = (JavaPlugin) Bukkit.getPluginManager().getPlugin("PlanetryItems");
             check(plugin != null && plugin.isEnabled(), "Packaged PlanetryItems did not enable");
+            preloadPackagedClasses();
             items = call(plugin, "items"); guard = call(plugin, "guard"); hooks = call(plugin, "hooks");
             integrations = Bukkit.getPluginManager().isPluginEnabled("Nexo");
             check(Bukkit.getPluginManager().isPluginEnabled("AuraSkills") == integrations, "Unexpected fixture combination");
@@ -76,6 +77,7 @@ public final class ItemsProbe extends JavaPlugin {
             equipment();
             equipmentTypes();
             commands();
+            networkGrants();
             policies();
             glyphTemplates();
             if (integrations) integrationChecks();
@@ -96,6 +98,19 @@ public final class ItemsProbe extends JavaPlugin {
     }
 
     @Override public void onDisable() { spawned.forEach(Entity::remove); }
+
+    private void preloadPackagedClasses() throws Exception {
+        // Paper's lazy class remapper requires the actual CraftServer. Resolve every plugin
+        // class before the controlled command/network probes substitute Bukkit's lookup.
+        var path = java.nio.file.Path.of(plugin.getClass().getProtectionDomain().getCodeSource().getLocation().toURI());
+        try (var jar = new java.util.jar.JarFile(path.toFile())) {
+            for (var entry : jar.stream().filter(value -> !value.isDirectory()
+                    && value.getName().startsWith("dev/flint/") && value.getName().endsWith(".class")).toList()) {
+                String name = entry.getName().substring(0, entry.getName().length() - 6).replace('/', '.');
+                Class.forName(name, true, plugin.getClass().getClassLoader());
+            }
+        }
+    }
 
     private void metadata() {
         stage = "metadata and lore";
@@ -1200,6 +1215,7 @@ public final class ItemsProbe extends JavaPlugin {
         Server actual = Bukkit.getServer();
         Server lookup = proxy(Server.class, (object, method, args) -> {
             if (method.getName().equals("getPlayerExact") && player.name.equals(args[0])) return player.player;
+            if (method.getName().equals("getPlayer") && player.id.equals(args[0])) return player.player;
             try { return method.invoke(actual, args); }
             catch (InvocationTargetException error) { throw error.getCause(); }
         });
@@ -1232,6 +1248,203 @@ public final class ItemsProbe extends JavaPlugin {
             }
             player.clear();
         } finally { field.set(null, actual); }
+    }
+
+    private String networkGrant(UUID target, String id, int amount) throws Exception {
+        return (String) plugin.getClass().getMethod("giveNetworkItem", UUID.class, String.class, int.class)
+                .invoke(plugin, target, id, amount);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> networkIds(String prefix) { return (List<String>) call(plugin, "networkItemIds", prefix); }
+
+    private void networkGrants() throws Exception {
+        stage = "network item API signatures and bounded sorted catalog snapshots";
+        check(plugin.getClass().getMethod("giveNetworkItem", UUID.class, String.class, int.class).getReturnType() == String.class,
+                "Network grant method signature changed");
+        check(plugin.getClass().getMethod("networkItemIds", String.class).getReturnType() == List.class,
+                "Network catalog method signature changed");
+        var file = plugin.getDataFolder().toPath().resolve("items/network-api-probe.yml");
+        String longest = "n".repeat(64);
+        var yaml = new StringBuilder("items:\n  network_stack:\n    material: AMETHYST_SHARD\n    max-durability: 0\n    max-stack-size: 64\n");
+        yaml.append("  network_soulbound:\n    material: PAPER\n    max-durability: 0\n    soulbound: true\n    canplace: false\n");
+        yaml.append("  ").append(longest).append(":\n    material: PAPER\n    max-durability: 0\n");
+        for (int n = 109; n >= 0; n--)
+            yaml.append("  network_probe_%03d:\n    material: PAPER\n    max-durability: 0\n".formatted(n));
+        Field field = Bukkit.class.getDeclaredField("server"); field.setAccessible(true);
+        Server actual = Bukkit.getServer();
+        Fake recipient = new Fake("NetworkItemsProbe", false);
+        var current = new java.util.concurrent.atomic.AtomicReference<Player>(recipient.player);
+        var lookups = new java.util.concurrent.atomic.AtomicInteger();
+        var replaceAt = new java.util.concurrent.atomic.AtomicInteger(Integer.MAX_VALUE);
+        Fake replacement = new Fake(recipient.id, recipient.name, false);
+        Server lookup = proxy(Server.class, (object, method, args) -> {
+            if (method.getName().equals("getPlayer") && recipient.id.equals(args[0])) {
+                if (lookups.incrementAndGet() == replaceAt.get()) current.set(replacement.player);
+                return current.get();
+            }
+            try { return method.invoke(actual, args); }
+            catch (InvocationTargetException error) { throw error.getCause(); }
+        });
+        try {
+            Files.writeString(file, yaml, StandardCharsets.UTF_8);
+            plugin.getCommand("planetryitems").execute(Bukkit.getConsoleSender(), "pitems", new String[]{"reload"});
+            List<String> all = networkIds("");
+            check(all.size() == 100 && all.equals(all.stream().sorted().toList()), "Network IDs are not bounded/sorted");
+            List<String> prefixed = networkIds("network_probe_");
+            check(prefixed.size() == 100 && prefixed.getFirst().equals("network_probe_000")
+                    && prefixed.getLast().equals("network_probe_099"), "Network completion did not sort before limiting");
+            check(networkIds("network_probe_10").size() == 10 && networkIds(longest).equals(List.of(longest)),
+                    "Network prefix filtering lost IDs outside the first page or the 64-character boundary");
+            for (String bad : Arrays.asList(null, "Network", "network ", "network:", "n".repeat(65)))
+                check(networkIds(bad).isEmpty(), "Malformed network prefix accepted: " + bad);
+            boolean immutable = false;
+            try { all.add("mutated"); } catch (UnsupportedOperationException expected) { immutable = true; }
+            check(immutable, "Network IDs must be an immutable snapshot");
+            passed();
+
+            field.set(null, lookup);
+            stage = "network grants validate arguments, current session and primary thread";
+            for (String bad : Arrays.asList(null, "", "Described", "described ", "-described", "_described", "a".repeat(65), "unknown_probe_id"))
+                check(networkGrant(recipient.id, bad, 1).equals("UNKNOWN_ITEM"), "Bad network ID accepted: " + bad);
+            for (int amount : new int[]{Integer.MIN_VALUE, 0, -1, 2305, Integer.MAX_VALUE})
+                check(networkGrant(recipient.id, "described", amount).equals("INVALID_AMOUNT"), "Bad network amount accepted");
+            check(networkGrant(null, "described", 1).equals("OFFLINE")
+                    && networkGrant(UUID.randomUUID(), "described", 1).equals("OFFLINE"), "Missing network target accepted");
+            recipient.online = false;
+            check(networkGrant(recipient.id, "described", 1).equals("OFFLINE"), "Offline target accepted");
+            recipient.online = true; recipient.valid = false;
+            check(networkGrant(recipient.id, "described", 1).equals("OFFLINE"), "Invalid target accepted");
+            recipient.valid = true; recipient.dead = true;
+            check(networkGrant(recipient.id, "described", 1).equals("OFFLINE"), "Dead target accepted");
+            recipient.dead = false;
+            var async = new java.util.concurrent.atomic.AtomicReference<Object>();
+            Thread thread = new Thread(() -> {
+                try { async.set(List.of(networkGrant(recipient.id, "described", 1), networkIds(""))); }
+                catch (Throwable error) { async.set(error); }
+            }, "items-network-api-off-thread-probe");
+            thread.start(); thread.join(5000);
+            check(!thread.isAlive() && List.of("UNAVAILABLE", List.of()).equals(async.get()),
+                    "Off-thread network API touched player state or did not refuse: " + async.get());
+            check(recipient.inventoryCount() == 0, "Rejected network inputs changed inventory");
+            passed();
+
+            stage = "real ItemStack network grant quantity, notifications and full-inventory atomicity";
+            recipient.messages.clear();
+            check(networkGrant(recipient.id, "described", 17).equals("SUCCESS") && recipient.count("described") == 17,
+                    "Network grant did not deliver the exact quantity without staff permission");
+            check(recipient.messages.size() == 1 && contains(recipient.messages, "received"), "Network recipient notification missing/duplicated");
+            check(Arrays.stream(recipient.items).filter(item -> !empty(item)).allMatch(item -> item.getAmount() <= 16),
+                    "Network grant exceeded item stack limit");
+            recipient.clear();
+            check(networkGrant(recipient.id, "network_stack", 2304).equals("SUCCESS") && recipient.count("network_stack") == 2304,
+                    "Maximum network grant failed in exactly 36 stackable slots");
+            recipient.clear();
+            check(networkGrant(recipient.id, longest, 1).equals("SUCCESS") && recipient.count(longest) == 1,
+                    "Valid 64-character item ID refused");
+            recipient.clear();
+            check(networkGrant(recipient.id, "network_soulbound", 1).equals("SUCCESS")
+                    && Boolean.TRUE.equals(call(call(plugin, "policy"), "soulbound", recipient.items[0]))
+                    && recipient.items[0].getItemMeta().getPersistentDataContainer()
+                            .get(new NamespacedKey(plugin, "can_place"), PersistentDataType.BYTE) == 0,
+                    "Network grant discarded soulbound/placement policies");
+            recipient.clear();
+            levels(1);
+            check(networkGrant(recipient.id, "restricted_hand", 1).equals("SUCCESS")
+                    && !((Set<?>) call(items, "unmet", recipient.player, definition(recipient.items[0]))).isEmpty()
+                    && recipient.items[0].getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
+                    "Network grant bypassed positive requirements or activated denied bonuses");
+            recipient.clear();
+            ItemStack partial = (ItemStack) call(items, "create", "described", recipient.player); partial.setAmount(15);
+            recipient.items[0] = partial;
+            for (int slot = 1; slot < 36; slot++) recipient.items[slot] = ItemStack.of(Material.COBBLESTONE, 64);
+            recipient.items[39] = ItemStack.of(Material.LEATHER_HELMET);
+            recipient.items[40] = ItemStack.of(Material.SHIELD);
+            recipient.cursor = ItemStack.of(Material.BOOK);
+            ItemStack cursor = recipient.cursor.clone();
+            ItemStack[] before = snapshot(recipient);
+            check(networkGrant(recipient.id, "described", 2).equals("INVENTORY_FULL")
+                    && Arrays.equals(before, recipient.items) && cursor.equals(recipient.cursor)
+                    && partial.getAmount() == 15 && recipient.items[0] == partial,
+                    "Failed partial merge changed live stacks, equipment or cursor");
+            check(networkGrant(recipient.id, "described", 1).equals("SUCCESS") && recipient.count("described") == 16
+                    && partial.getAmount() == 15, "Successful partial merge changed the original reference or wrong quantity");
+            passed();
+
+            recipient.clear();
+            stage = "network grants reject session replacement and unavailable item sources";
+            current.set(recipient.player); lookups.set(0); replaceAt.set(3);
+            check(networkGrant(recipient.id, "described", 1).equals("OFFLINE") && recipient.inventoryCount() == 0
+                    && replacement.inventoryCount() == 0, "Preparation granted to a replaced UUID session");
+            replaceAt.set(Integer.MAX_VALUE); current.set(recipient.player);
+            if (integrations) setField("Nexo", "available", false);
+            check(networkGrant(recipient.id, "nexo", 1).equals("UNAVAILABLE") && recipient.inventoryCount() == 0,
+                    "Unavailable Nexo grant changed inventory or silently used vanilla material");
+            if (integrations) setField("Nexo", "available", true);
+            passed();
+
+            if (integrations) {
+                stage = "network readiness and session fencing at the actual storage write";
+                setField("NetworkInventorySync", "ready", false);
+                check(networkGrant(recipient.id, "described", 1).equals("INVENTORY_UNAVAILABLE"), "Unready network inventory accepted");
+                setField("NetworkInventorySync", "ready", true);
+                setField("NetworkInventorySync", "readinessChecks", 0);
+                // Grant preflight and ItemService.create/refresh each check readiness;
+                // the third check is the final gate immediately before storage mutation.
+                setField("NetworkInventorySync", "readyForChecks", 2);
+                check(networkGrant(recipient.id, "described", 1).equals("INVENTORY_UNAVAILABLE") && recipient.inventoryCount() == 0,
+                        "Readiness revoked during preparation still committed");
+                setField("NetworkInventorySync", "readyForChecks", Integer.MAX_VALUE);
+                var readiness = new java.util.concurrent.atomic.AtomicInteger();
+                setField("NetworkInventorySync", "beforeReadiness", (Runnable) () -> {
+                    if (readiness.incrementAndGet() == 3) current.set(replacement.player);
+                });
+                check(networkGrant(recipient.id, "described", 1).equals("OFFLINE") && recipient.inventoryCount() == 0
+                        && replacement.inventoryCount() == 0, "Readiness callback replaced the session but grant committed");
+                current.set(recipient.player); readiness.set(0);
+                ItemStack foreign = ItemStack.of(Material.EMERALD, 3);
+                setField("NetworkInventorySync", "beforeReadiness", (Runnable) () -> {
+                    if (readiness.incrementAndGet() == 3) recipient.items[5] = foreign;
+                });
+                check(networkGrant(recipient.id, "described", 1).equals("INVENTORY_UNAVAILABLE")
+                        && recipient.items[5] == foreign && recipient.count("described") == 0,
+                        "Reentrant inventory change was overwritten");
+                setField("NetworkInventorySync", "beforeReadiness", null);
+                passed();
+            }
+
+            stage = "committed network grant remains successful after reconciliation or notification failure";
+            recipient.clear(); recipient.storageWrites = 0; recipient.failReconcileAfterGrant = true; recipient.failNotifications = true;
+            check(networkGrant(recipient.id, "described", 1).equals("SUCCESS") && recipient.count("described") == 1
+                    && recipient.storageWrites == 1, "Late failure reported rejection or repeated the grant");
+            recipient.failReconcileAfterGrant = false; recipient.failNotifications = false;
+            recipient.clear();
+            passed();
+
+            stage = "inventory write uncertainty propagates without a definite rejection or repeated grant";
+            recipient.storageWrites = 0; recipient.failWriteAfterGrant = true;
+            boolean uncertain = false;
+            try { networkGrant(recipient.id, "described", 1); }
+            catch (InvocationTargetException expected) {
+                uncertain = expected.getCause() instanceof IllegalStateException
+                        && expected.getCause().getMessage().contains("write uncertainty");
+            }
+            check(uncertain && recipient.count("described") == 1 && recipient.storageWrites == 1,
+                    "Partially applied write returned a definite result or repeated delivery");
+            recipient.failWriteAfterGrant = false; recipient.clear();
+            passed();
+        } finally {
+            field.set(null, actual);
+            if (integrations) {
+                setField("Nexo", "available", true);
+                setField("NetworkInventorySync", "ready", true);
+                setField("NetworkInventorySync", "readyForChecks", Integer.MAX_VALUE);
+                setField("NetworkInventorySync", "beforeReadiness", null);
+            }
+            Files.deleteIfExists(file);
+            plugin.getCommand("planetryitems").execute(Bukkit.getConsoleSender(), "pitems", new String[]{"reload"});
+        }
+        check(networkIds("network_probe_").isEmpty(), "Network completion retained a retired catalog snapshot");
     }
 
     private void migrationCommands() {
@@ -1806,6 +2019,21 @@ public final class ItemsProbe extends JavaPlugin {
         ItemStack tool = create("tool");
         PlayerInteractEvent event = new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_AIR, tool, null, BlockFace.SELF, EquipmentSlot.HAND);
         fire(event); check(event.useItemInHand() == Event.Result.DENY && durability(tool) == 3, "Disabled sync allowed managed use");
+        try {
+            Field field = Bukkit.class.getDeclaredField("server"); field.setAccessible(true);
+            Server actual = Bukkit.getServer();
+            Server lookup = proxy(Server.class, (object, method, args) -> {
+                if (method.getName().equals("getPlayer") && player.id.equals(args[0])) return player.player;
+                try { return method.invoke(actual, args); }
+                catch (InvocationTargetException error) { throw error.getCause(); }
+            });
+            ItemStack[] before = snapshot();
+            try {
+                field.set(null, lookup);
+                check(networkGrant(player.id, "described", 1).equals("INVENTORY_UNAVAILABLE") && Arrays.equals(before, player.items),
+                        "Network API treated installed disabled Inventory Sync as absent");
+            } finally { field.set(null, actual); }
+        } catch (Exception error) { throw new IllegalStateException(error); }
         passed();
     }
 
@@ -1933,6 +2161,8 @@ public final class ItemsProbe extends JavaPlugin {
         InventoryType viewType = InventoryType.CRAFTING;
         GameMode gameMode = GameMode.SURVIVAL;
         ItemStack cursor; boolean admin, legacyAdmin, blocking, gliding; boolean glyphAllowed = true; int breaks, sounds;
+        boolean online = true, valid = true, dead, failReconcileAfterGrant, failNotifications, failSizeOnce, failWriteAfterGrant;
+        int storageWrites;
         Fake(String name, boolean admin) {
             this(UUID.randomUUID(), name, admin);
         }
@@ -1941,7 +2171,11 @@ public final class ItemsProbe extends JavaPlugin {
             inventory = proxy(PlayerInventory.class, (object, method, args) -> {
                 check(Bukkit.isPrimaryThread(), "Inventory accessed off main thread");
                 return switch (method.getName()) {
-                    case "getSize" -> items.length; case "getMaxStackSize" -> 64; case "getType" -> InventoryType.PLAYER;
+                    case "getSize" -> {
+                        if (failSizeOnce) { failSizeOnce = false; throw new IllegalStateException("Controlled post-grant reconciliation failure"); }
+                        yield items.length;
+                    }
+                    case "getMaxStackSize" -> 64; case "getType" -> InventoryType.PLAYER;
                     case "getHolder" -> player; case "getViewers" -> List.of(player);
                     case "getItem" -> items[index(args[0])];
                     case "setItem" -> { items[index(args[0])] = (ItemStack) args[1]; yield null; }
@@ -1956,7 +2190,12 @@ public final class ItemsProbe extends JavaPlugin {
                     case "setLeggings" -> { items[37] = (ItemStack) args[0]; yield null; }
                     case "setBoots" -> { items[36] = (ItemStack) args[0]; yield null; }
                     case "firstEmpty" -> firstEmpty(); case "addItem" -> add((ItemStack[]) args[0]);
-                    case "setStorageContents" -> { Arrays.fill(items, 0, 36, null); System.arraycopy(args[0], 0, items, 0, ((ItemStack[]) args[0]).length); yield null; }
+                    case "setStorageContents" -> {
+                        Arrays.fill(items, 0, 36, null); System.arraycopy(args[0], 0, items, 0, ((ItemStack[]) args[0]).length);
+                        storageWrites++; if (failReconcileAfterGrant) failSizeOnce = true;
+                        if (failWriteAfterGrant) throw new IllegalStateException("Controlled inventory write uncertainty");
+                        yield null;
+                    }
                     case "iterator" -> Arrays.asList(items.clone()).listIterator(args == null || args.length == 0 ? 0 : (int) args[0]);
                     case "getLocation" -> Bukkit.getWorlds().getFirst().getSpawnLocation();
                     case "hashCode" -> System.identityHashCode(object); case "equals" -> object == args[0];
@@ -1966,8 +2205,8 @@ public final class ItemsProbe extends JavaPlugin {
             player = proxy(Player.class, (object, method, args) -> switch (method.getName()) {
                 case "getUniqueId" -> id; case "getName", "getDisplayName" -> name; case "name", "displayName" -> Component.text(name);
                 case "getServer" -> Bukkit.getServer(); case "getPlayer" -> object;
-                case "isOnline", "isValid", "hasPlayedBefore", "isConnected" -> true;
-                case "isDead", "isSneaking", "isOp" -> false;
+                case "isOnline", "isConnected" -> online; case "isValid" -> valid; case "isDead" -> dead;
+                case "hasPlayedBefore" -> true; case "isSneaking", "isOp" -> false;
                 case "hasPermission", "isPermissionSet" -> args[0].equals("nexo.glyph.probe") || args[0].equals("nexo.shift")
                         ? glyphAllowed : permission(args[0]);
                 case "get" -> args[0].equals(net.kyori.adventure.identity.Identity.UUID) ? Optional.of(id) : Optional.empty();
@@ -1985,7 +2224,10 @@ public final class ItemsProbe extends JavaPlugin {
                 case "getLevel" -> 999; // Requirements must read Core, not Minecraft's display level.
                 case "broadcastSlotBreak" -> { breaks++; yield null; }
                 case "playSound" -> { sounds++; yield null; }
-                case "sendMessage" -> { for (Object value : args) { if (value instanceof Component component) messages.add(plain(component)); else if (value instanceof String text) messages.add(text); else if (value instanceof String[] texts) messages.addAll(List.of(texts)); } yield null; }
+                case "sendMessage" -> {
+                    if (failNotifications) throw new IllegalStateException("Controlled post-grant notification failure");
+                    for (Object value : args) { if (value instanceof Component component) messages.add(plain(component)); else if (value instanceof String text) messages.add(text); else if (value instanceof String[] texts) messages.addAll(List.of(texts)); } yield null;
+                }
                 case "updateInventory", "closeInventory", "sendExperienceChange" -> null;
                 case "getEffectivePermissions" -> Set.of();
                 case "hashCode" -> System.identityHashCode(object); case "equals" -> object == args[0]; case "toString" -> name;

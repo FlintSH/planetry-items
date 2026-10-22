@@ -420,6 +420,8 @@ def run_server(java, work, log_file):
             raise AssertionError("PlanetryItems probe failed; see server output")
         if "Could not pass event" in log or "generated an exception" in log or "Error occurred while enabling PlanetryItems" in log:
             raise AssertionError("Plugin event/lifecycle exception in Paper; see server output")
+        if "Fatal error trying to convert" in log:
+            raise AssertionError("Paper class remapper fatal error; see server output")
         if process.returncode != 0:
             raise AssertionError(f"Paper exited {process.returncode}")
     finally:

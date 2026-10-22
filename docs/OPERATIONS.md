@@ -59,7 +59,12 @@ Console commands use the same arguments without the leading slash. Tab
 completion for management commands is permission-gated. `/migrate` has no
 argument completions. A grant stages all additions against the 36 storage
 slots before committing; insufficient space gives no partial grant and no
-overflow drops. It does not grant to offline players or across backends.
+overflow drops. The local command targets an online player on this backend.
+A compatible authenticated network bridge can call the same grant path on the
+target's current backend through the [network item API](DEVELOPMENT.md#network-item-api).
+The bridge/proxy authorizes network staff requests; the local command retains
+`planetry.admin.items`. Offline grants are unavailable in both cases, and the
+receiving backend rechecks the live session and Inventory Sync readiness.
 
 `info` shows the ID/current durability, configured and effective material,
 model data, name, rarity, type, visual source, equipment slot, quantity,

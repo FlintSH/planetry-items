@@ -90,6 +90,20 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     public ItemPolicy policy() { return policy; }
     public SoulboundRecovery recovery() { return recovery; }
 
+    /** Main-thread, immutable, sorted completion snapshot for optional network integrations. */
+    public List<String> networkItemIds(String prefix) {
+        return ItemGrants.ids(this, prefix);
+    }
+
+    /** Main-thread grant; the caller authenticates/authorizes requests and must not retry uncertain deliveries. */
+    public String giveNetworkItem(UUID target, String item, int amount) {
+        if (!ItemGrants.available(this)) return ItemGrants.Result.UNAVAILABLE.name();
+        Player player = target == null ? null : Bukkit.getPlayer(target);
+        var result = ItemGrants.give(this, player, item, amount);
+        if (result == ItemGrants.Result.SUCCESS) ItemGrants.notify(this, null, player, item, amount);
+        return result.name();
+    }
+
     public void message(CommandSender recipient, String key, Map<String, String> values) {
         recipient.sendMessage(language.text(key, values, hooks.glyphs(recipient instanceof Player player ? player : null), recipient));
     }
@@ -132,26 +146,13 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
             int amount;
             try { amount = args.length == 4 ? Integer.parseInt(args[3]) : 1; if (amount < 1 || amount > 2304) throw new NumberFormatException(); }
             catch (NumberFormatException e) { message(sender, "messages.invalid-amount", Map.of()); return true; }
-            if (!hooks.inventoryReady(target)) { message(sender, "messages.integration-unavailable", Map.of()); return true; }
-            try {
-                ItemStack prototype = items.create(args[2], target);
-                // Stage all stacks in a private inventory first. A full inventory never gets a partial grant.
-                var staging = Bukkit.createInventory(null, 36);
-                staging.setStorageContents(target.getInventory().getStorageContents());
-                for (int remaining = amount; remaining > 0;) {
-                    int count = Math.min(remaining, prototype.getMaxStackSize());
-                    ItemStack stack = prototype.clone(); stack.setAmount(count);
-                    if (!staging.addItem(stack).isEmpty()) { message(sender, "messages.inventory-full", Map.of("player", target.getName())); return true; }
-                    remaining -= count;
-                }
-                target.getInventory().setStorageContents(staging.getStorageContents());
-                guard.reconcile(target);
-                var values = Map.of("player", target.getName(), "item", args[2], "amount", Integer.toString(amount));
-                message(sender, "messages.given", values);
-                if (sender != target) message(target, "messages.received", values);
-            } catch (IllegalArgumentException | IllegalStateException error) {
-                getLogger().warning("Could not give item " + args[2] + ": " + error.getMessage());
-                message(sender, "messages.integration-unavailable", Map.of());
+            switch (ItemGrants.give(this, target, args[2], amount)) {
+                case SUCCESS -> ItemGrants.notify(this, sender, target, args[2], amount);
+                case OFFLINE -> message(sender, "messages.player-not-found", Map.of("player", args[1]));
+                case UNKNOWN_ITEM -> message(sender, "messages.unknown-item", Map.of("item", args[2]));
+                case INVALID_AMOUNT -> message(sender, "messages.invalid-amount", Map.of());
+                case INVENTORY_FULL -> message(sender, "messages.inventory-full", Map.of("player", target.getName()));
+                default -> message(sender, "messages.integration-unavailable", Map.of());
             }
             return true;
         }

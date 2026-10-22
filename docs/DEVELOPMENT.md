@@ -73,6 +73,63 @@ reload replaces immutable snapshots. Do not mutate player inventory off-thread,
 call migrations while unready, or add persistent AuraSkills modifiers under
 PlanetryItems' names.
 
+## Network item API
+
+A compatible Paper bridge can reflect these public methods on the enabled plugin
+instance without linking PlanetryItems classes:
+
+```java
+List<String> networkItemIds(String prefix)
+String giveNetworkItem(UUID target, String item, int amount)
+```
+
+Both calls are synchronous and require Bukkit's primary server thread.
+`networkItemIds` returns an immutable snapshot of at most 100 active IDs, filtered
+by prefix and then sorted lexicographically. The prefix may be empty or contain
+up to 64 lowercase ASCII letters, digits, underscores or hyphens. Null/malformed
+prefixes, off-thread calls and an unavailable plugin return an empty list.
+Reloads are visible on the next call; callers must not retain this as a live catalog.
+
+`giveNetworkItem` accepts an authenticated target UUID, an exact configured ID
+matching `[a-z0-9][a-z0-9_-]{0,63}`, and an amount from 1 through 2304 inclusive.
+It returns one of these exact strings:
+
+| Result | Meaning |
+| --- | --- |
+| `SUCCESS` | The complete storage write finished. Recipient notification and guard reconciliation follow. |
+| `OFFLINE` | No current online, valid, living Bukkit player session exists, or that session changed during preparation. |
+| `UNKNOWN_ITEM` | The ID is null, malformed or absent from the active catalog. |
+| `INVALID_AMOUNT` | The amount is outside 1–2304. |
+| `INVENTORY_UNAVAILABLE` | Inventory Sync refuses mutation, or the captured inventory changed during preparation. |
+| `INVENTORY_FULL` | The complete batch cannot fit in player storage. No part of the batch is inserted. |
+| `UNAVAILABLE` | The plugin is unavailable, the call is off-thread, or preparation failed, for example because a Nexo source is loading. |
+
+Plugin/thread availability is checked first, followed by item, amount and session
+validation. Each existing storage stack and grant portion is cloned before staging;
+partial merges during a rejected batch cannot modify live stacks. The current
+Bukkit player instance, online/living/valid state, inventory identity and readiness
+are checked again at the write. Armour, offhand and cursor are outside the grant
+destination; the normal guard still reconciles equipment, requirements and policies.
+Requirements restrict use rather than receipt. Soulbound and placement policies
+remain attached to the created items.
+
+An exception from the inventory write propagates: the write may already have
+applied some or all items. Treat that outcome as uncertain, retain the bridge's
+request reservation and do not automatically retry or send a definite rejection.
+After a successful write, reconciliation or notification exceptions are logged
+and retain `SUCCESS`; they never trigger another grant. Successful direct API
+calls send the existing `messages.received` template once to the recipient.
+The local command shares the mutation path and retains its existing sender/self
+notification behavior.
+
+This API does not authenticate callers, check staff permissions, deduplicate
+requests or move players between servers. The bridge/proxy must authorize and
+authenticate requests, fence backend sessions and suppress duplicate deliveries.
+Local administration still requires `planetry.admin.items`; public `/migrate` and
+the soulbound drop confirmation retain their existing rules. Missing optional
+PlanetryItems support must be handled by the calling bridge. Publishing this API
+does not authorize production installation.
+
 ## Persistent data contract
 
 | Scope/key | Bukkit type | Meaning |

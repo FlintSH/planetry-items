@@ -68,6 +68,13 @@ There is no requirements bypass permission.
 | `/migrate` | Public, player-only inventory update; no permission; two-hour cooldown |
 | `/planetryitems reload` | Validate and reload all item and language files together |
 
+Optional network staff commands can use the plugin's bounded item-ID lookup and
+atomic grant API through a compatible Paper bridge. PlanetryItems still runs on
+the receiving backend, where it checks the current player session, capacity and
+Inventory Sync readiness. The local command keeps `planetry.admin.items`; the
+network caller must authorize its own staff requests. See the
+[runtime API contract](docs/DEVELOPMENT.md#network-item-api).
+
 `/pitems` is an alias. The soulbound drop override uses the same
 `planetry.admin.items` permission and resets on session changes, reload and
 death. While enabled, the first explicit drop warns; a second drop of the
