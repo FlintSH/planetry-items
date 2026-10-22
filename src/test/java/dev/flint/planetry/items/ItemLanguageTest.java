@@ -125,10 +125,10 @@ class ItemLanguageTest {
     @Test void marksOnlyLowRemainingDurabilityRedAndClampsValues() throws Exception {
         var item = item("");
         var lang = language("");
-        var low = lang.lore(item, 10, Set.of(), null).getLast();
-        assertEquals("Durability: 10/100", PLAIN.serialize(low));
+        var low = lang.lore(item, 30, Set.of(), null).getLast();
+        assertEquals("Durability: 30/100", PLAIN.serialize(low));
         assertTrue(hasColor(low, NamedTextColor.RED));
-        assertFalse(hasColor(lang.lore(item, 11, Set.of(), null).getLast(), NamedTextColor.RED));
+        assertFalse(hasColor(lang.lore(item, 31, Set.of(), null).getLast(), NamedTextColor.RED));
         assertEquals("Durability: 0/100", PLAIN.serialize(lang.lore(item, -10, Set.of(), null).getLast()));
         assertEquals("Durability: 100/100", PLAIN.serialize(lang.lore(item, 200, Set.of(), null).getLast()));
     }
@@ -146,6 +146,17 @@ class ItemLanguageTest {
         var lang = language("");
         assertTrue(hasColor(lang.lore(item, 1, Set.of(), null).getLast(), NamedTextColor.RED));
         assertFalse(hasColor(lang.lore(item, 2, Set.of(), null).getLast(), NamedTextColor.RED));
+    }
+
+    @Test void lowDurabilityUsesAnExactThirtyPercentBoundaryWithoutOverflow() throws Exception {
+        var lang = language("");
+        for (int maximum : List.of(1, 7, 500, Integer.MAX_VALUE)) {
+            var item = item("max-durability: " + maximum);
+            int boundary = Math.max(1, (int) (maximum * 3L / 10));
+            assertTrue(hasColor(lang.lore(item, boundary, Set.of(), null).getLast(), NamedTextColor.RED));
+            if (boundary < maximum)
+                assertFalse(hasColor(lang.lore(item, boundary + 1, Set.of(), null).getLast(), NamedTextColor.RED));
+        }
     }
 
     @Test void valuesCannotInjectMiniMessageOrRecursivePlaceholders() throws Exception {

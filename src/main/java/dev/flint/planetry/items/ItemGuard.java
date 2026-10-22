@@ -2,6 +2,9 @@ package dev.flint.planetry.items;
 
 import com.destroystokyo.paper.event.player.PlayerElytraBoostEvent;
 import com.destroystokyo.paper.event.player.PlayerLaunchProjectileEvent;
+import com.google.common.collect.HashMultimap;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.event.block.PlayerShearBlockEvent;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import io.papermc.paper.event.player.PlayerSwapWithEquipmentSlotEvent;
 import io.papermc.paper.event.player.PlayerInventorySlotChangeEvent;
@@ -22,19 +25,16 @@ import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 public final class ItemGuard implements Listener {
     private final PlanetryItems plugin;
     private final Map<UUID, Long> lastMessage = new HashMap<>();
-    private final Map<UUID, EntityUse> entityUses = new HashMap<>();
+    private final Map<UUID, FishingUse> fishingUses = new HashMap<>();
     private final Set<UUID> queued = new HashSet<>();
     private final Set<UUID> pendingMigration = new HashSet<>();
     private final Map<UUID, Long> nextMigration = new HashMap<>();
     private final Set<String> migrationWarnings = new HashSet<>();
     private record Session(Player player) { }
+    private record FishingUse(int tick, UUID hook) { }
     private final Map<UUID, Session> sessions = new HashMap<>();
     private static final List<EquipmentSlot> SLOTS = List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND,
             EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET);
-    private static final Set<Material> PROJECTILE_ITEMS = Set.of(Material.BOW, Material.CROSSBOW, Material.TRIDENT,
-            Material.SNOWBALL, Material.EGG, Material.ENDER_PEARL, Material.EXPERIENCE_BOTTLE,
-            Material.SPLASH_POTION, Material.LINGERING_POTION, Material.FIREWORK_ROCKET, Material.WIND_CHARGE);
-    private record EntityUse(int tick, UUID entity, EquipmentSlot hand, String item, boolean precise) { }
 
     public ItemGuard(PlanetryItems plugin) { this.plugin = plugin; }
     private ItemService items() { return plugin.items(); }
@@ -61,20 +61,6 @@ public final class ItemGuard implements Listener {
         if (plugin.policy().placementInteraction(e)) return;
         if (deny(e.getPlayer(), e.getItem())) { e.setCancelled(true); return; }
         if (e.getItem() != null && items().definition(e.getItem()) != null) items().refresh(e.getItem(), e.getPlayer());
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void interactUse(PlayerInteractEvent e) {
-        if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        // Air interactions deny the nonexistent block by default, so isCancelled alone is not an item-use veto.
-        if (e.useItemInHand() == Event.Result.DENY) return;
-        var def = items().definition(e.getItem());
-        if (def == null || !items().usable(e.getPlayer(), e.getItem())) return;
-        // Food and ranged weapons pay on completion, equipment pays when it protects its wearer.
-        if (def.equipSlot() != null || def.type().equals("FOOD") || e.getItem().getType().isEdible()
-                || PROJECTILE_ITEMS.contains(e.getItem().getType()) || e.getItem().getType() == Material.SHIELD) return;
-        items().damage(e.getPlayer(), e.getItem(), hand(e.getHand()));
-        later(e.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -203,37 +189,94 @@ public final class ItemGuard implements Listener {
         if (plugin.policy().entityDeposit(e) || deny(e.getPlayer(), e.getPlayer().getInventory().getItem(e.getHand()))) e.setCancelled(true);
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void entityInteractUse(PlayerInteractEntityEvent e) {
-        ItemStack stack = e.getPlayer().getInventory().getItem(e.getHand());
-        var def = items().definition(stack);
-        if (def == null || !items().usable(e.getPlayer(), stack)) return;
-        // InteractAt and ordinary interaction can describe the same click, and share a Bukkit handler list.
-        EntityUse current = new EntityUse(Bukkit.getCurrentTick(), e.getRightClicked().getUniqueId(), e.getHand(),
-                def.id(), e instanceof PlayerInteractAtEntityEvent);
-        EntityUse previous = entityUses.put(e.getPlayer().getUniqueId(), current);
-        if (previous != null && previous.tick() == current.tick() && previous.entity().equals(current.entity())
-                && previous.hand() == current.hand() && previous.item().equals(current.item())
-                && previous.precise() != current.precise()) return;
-        items().damage(e.getPlayer(), stack, e.getHand());
-        later(e.getPlayer());
-    }
-
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void place(BlockPlaceEvent e) {
         if (plugin.policy().placementBlocked(e.getItemInHand()) || deny(e.getPlayer(), e.getItemInHand())) e.setCancelled(true);
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void toolBlockUse(BlockPlaceEvent e) {
+        // Paper dispatches this after a successful tool block transformation/ignition,
+        // including its more specific change/ignite event. Ordinary input clicks never pay.
+        String material = e.getItemInHand().getType().name();
+        if (!e.canBuild() || !(material.endsWith("_AXE") || material.endsWith("_HOE")
+                || material.endsWith("_SHOVEL") || material.equals("FLINT_AND_STEEL"))) return;
+        completedHandUse(e.getPlayer(), e.getItemInHand(), e.getHand());
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void shearEntity(PlayerShearEntityEvent e) {
+        if (deny(e.getPlayer(), e.getItem())) e.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void shearEntityUse(PlayerShearEntityEvent e) {
+        completedHandUse(e.getPlayer(), e.getItem(), e.getHand());
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void shearBlock(PlayerShearBlockEvent e) {
+        if (deny(e.getPlayer(), e.getItem())) e.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void shearBlockUse(PlayerShearBlockEvent e) {
+        completedHandUse(e.getPlayer(), e.getItem(), e.getHand());
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void fish(PlayerFishEvent e) {
+        // Only interaction states carry a hand. Bites/lures are notifications, not uses.
+        if (e.getHand() != null && deny(e.getPlayer(), e.getPlayer().getInventory().getItem(e.getHand())))
+            e.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void fishUse(PlayerFishEvent e) {
+        if (e.getHand() == null || !(e.getState() == PlayerFishEvent.State.CAUGHT_FISH
+                || e.getState() == PlayerFishEvent.State.CAUGHT_ENTITY
+                || e.getState() == PlayerFishEvent.State.IN_GROUND)) return;
+        ItemStack rod = e.getPlayer().getInventory().getItem(e.getHand());
+        if (items().definition(rod) == null || !items().usable(e.getPlayer(), rod)) return;
+        // One reel may produce several loot events and an additional in-ground event.
+        FishingUse current = new FishingUse(Bukkit.getCurrentTick(), e.getHook().getUniqueId());
+        FishingUse previous = fishingUses.put(e.getPlayer().getUniqueId(), current);
+        if (current.equals(previous)) return;
+        completedHandUse(e.getPlayer(), rod, e.getHand());
+    }
+
+    private void completedHandUse(Player player, ItemStack source, EquipmentSlot hand) {
+        // Some completion events expose snapshots (notably entity shearing).
+        // Spend the actual matching held stack rather than changing a disposable copy.
+        ItemStack held = player.getInventory().getItem(hand);
+        if (source == null || !source.isSimilar(held) || !items().usable(player, held)) return;
+        items().damage(player, held, hand);
+        later(player);
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST)
     public void damageItem(PlayerItemDamageEvent e) {
-        // All managed items use the custom one-point path, including vanilla tools.
+        if (items().id(e.getItem()) == null) return;
+        // These special tools have no separate completion event. Their native wear
+        // signal confirms use; do not also route combat/mining/etc through it.
+        boolean specialUse = !e.isCancelled() && e.getDamage() > 0 && switch (e.getItem().getType()) {
+            case BRUSH, CARROT_ON_A_STICK, WARPED_FUNGUS_ON_A_STICK -> true;
+            default -> false;
+        };
+        e.setCancelled(true);
+        if (specialUse) completedHandUse(e.getPlayer(), e.getItem(), sourceHand(e.getPlayer(), e.getItem()));
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void mendItem(PlayerItemMendEvent e) {
+        // Mending must not repair just the displayed native bar while leaving PDC unchanged.
         if (items().id(e.getItem()) != null) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void glide(EntityToggleGlideEvent e) {
         if (e.isGliding() && e.getEntity() instanceof Player p
-                && deny(p, p.getInventory().getChestplate())) e.setCancelled(true);
+                && denyEquip(p, p.getInventory().getChestplate(), EquipmentSlot.CHEST)) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -247,7 +290,7 @@ public final class ItemGuard implements Listener {
         if (!p.isGliding()) return;
         ItemStack chest = p.getInventory().getChestplate();
         if (items().id(chest) == null) return;
-        if (deny(p, chest)) { p.setGliding(false); return; }
+        if (denyEquip(p, chest, EquipmentSlot.CHEST)) { p.setGliding(false); return; }
         if (items().damage(p, chest, EquipmentSlot.CHEST)) p.setGliding(false);
     }
 
@@ -288,7 +331,7 @@ public final class ItemGuard implements Listener {
             for (EquipmentSlot slot : SLOTS) {
                 if (slot == EquipmentSlot.HAND || slot == EquipmentSlot.OFF_HAND) continue;
                 ItemStack stack = p.getInventory().getItem(slot);
-                if (items().usable(p, stack)) items().damage(p, stack, slot);
+                if (items().canEquip(stack, slot) && items().usable(p, stack)) items().damage(p, stack, slot);
             }
         }
         if (blocked || e.getFinalDamage() > 0) later(p);
@@ -296,7 +339,7 @@ public final class ItemGuard implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void equipmentSwap(PlayerSwapWithEquipmentSlotEvent e) {
-        if (e.getSlot() != EquipmentSlot.OFF_HAND && deny(e.getPlayer(), e.getItemInHand())) e.setCancelled(true);
+        if (e.getSlot() != EquipmentSlot.OFF_HAND && denyEquip(e.getPlayer(), e.getItemInHand(), e.getSlot())) e.setCancelled(true);
         else later(e.getPlayer());
     }
 
@@ -315,7 +358,10 @@ public final class ItemGuard implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void dispense(BlockDispenseArmorEvent e) {
-        if (e.getTargetEntity() instanceof Player p && deny(p, e.getItem())) e.setCancelled(true);
+        if (!(e.getTargetEntity() instanceof Player p)) return;
+        EquipmentSlot destination = nativeEquipSlot(e.getItem());
+        if ((items().id(e.getItem()) != null && destination == null)
+                || (destination != null && denyEquip(p, e.getItem(), destination))) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -324,11 +370,13 @@ public final class ItemGuard implements Listener {
         ItemStack incoming = e.getCursor();
         if (e.getClick() == ClickType.NUMBER_KEY && e.getHotbarButton() >= 0) incoming = p.getInventory().getItem(e.getHotbarButton());
         if (e.getClick() == ClickType.SWAP_OFFHAND) incoming = p.getInventory().getItemInOffHand();
-        boolean equipmentDestination = e.getSlotType() == InventoryType.SlotType.ARMOR;
-        var shifted = items().definition(e.getCurrentItem());
-        if ((equipmentDestination && deny(p, incoming)) ||
-                (e.isShiftClick() && e.getClickedInventory() == p.getInventory() && shifted != null
-                        && shifted.equipSlot() != null && deny(p, e.getCurrentItem()))) {
+        EquipmentSlot destination = e.getSlotType() == InventoryType.SlotType.ARMOR ? armourSlot(e.getSlot()) : null;
+        EquipmentSlot shifted = nativeEquipSlot(e.getCurrentItem());
+        boolean shiftEquip = e.isShiftClick() && e.getView().getType() == InventoryType.CRAFTING
+                && e.getClickedInventory() == p.getInventory() && destination == null && shifted != null
+                && armourSlot(shifted) && empty(p.getInventory().getItem(shifted));
+        if ((destination != null && denyEquip(p, incoming, destination))
+                || (shiftEquip && denyEquip(p, e.getCurrentItem(), shifted))) {
             e.setCancelled(true); return;
         }
         // Block vanilla transformations that could destroy custom identity or bypass durability.
@@ -348,9 +396,9 @@ public final class ItemGuard implements Listener {
     public void drag(InventoryDragEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         for (int raw : e.getRawSlots()) {
-            int slot = e.getView().convertSlot(raw);
             if (e.getView().getSlotType(raw) == InventoryType.SlotType.ARMOR) {
-                if (deny(p, e.getOldCursor())) { e.setCancelled(true); return; }
+                EquipmentSlot destination = armourSlot(e.getView().convertSlot(raw));
+                if (destination != null && denyEquip(p, e.getOldCursor(), destination)) { e.setCancelled(true); return; }
             }
         }
         ItemStack oldCursor = e.getOldCursor();
@@ -389,7 +437,8 @@ public final class ItemGuard implements Listener {
         if (current != null && current.player() != e.getPlayer()) return;
         sessions.remove(e.getPlayer().getUniqueId());
         plugin.hooks().clearBonuses(e.getPlayer()); lastMessage.remove(e.getPlayer().getUniqueId()); queued.remove(e.getPlayer().getUniqueId());
-        entityUses.remove(e.getPlayer().getUniqueId()); pendingMigration.remove(e.getPlayer().getUniqueId()); nextMigration.remove(e.getPlayer().getUniqueId());
+        fishingUses.remove(e.getPlayer().getUniqueId());
+        pendingMigration.remove(e.getPlayer().getUniqueId()); nextMigration.remove(e.getPlayer().getUniqueId());
     }
 
     public void later(Player p) {
@@ -440,6 +489,9 @@ public final class ItemGuard implements Listener {
                 removed(p, original);
                 continue;
             } else items().refresh(refreshed, p);
+            EquipmentSlot worn = armourSlot(i);
+            if (worn != null && !items().canEquip(refreshed, worn))
+                refreshed.editMeta(meta -> meta.setAttributeModifiers(HashMultimap.create()));
             if (!refreshed.equals(original)) inv.setItem(i, refreshed);
         }
         ItemStack cursor = p.getItemOnCursor();
@@ -455,11 +507,15 @@ public final class ItemGuard implements Listener {
             ItemStack stack = inv.getItem(slot);
             var def = items().definition(stack);
             boolean hand = slot == EquipmentSlot.HAND || slot == EquipmentSlot.OFF_HAND;
-            if (items().id(stack) != null && !items().usable(p, stack)) {
+            if (items().id(stack) != null && (!items().usable(p, stack) || (!hand && !items().canEquip(stack, slot)))) {
                 if (!hand) {
                     // Retain unusable soulbound equipment when storage is full. Refresh has
                     // already removed native bonuses; this branch also excludes AuraSkills bonuses.
-                    if (plugin.policy().soulbound(stack) && inv.firstEmpty() < 0) continue;
+                    if (plugin.policy().soulbound(stack) && inv.firstEmpty() < 0) {
+                        // Invalid worn slots must not retain configured ANY/ARMOR modifiers.
+                        stack.editMeta(meta -> meta.setAttributeModifiers(HashMultimap.create()));
+                        continue;
+                    }
                     inv.setItem(slot, null);
                     for (var leftover : inv.addItem(stack).values()) p.getWorld().dropItemNaturally(p.getLocation(), leftover);
                     deny(p, stack);
@@ -543,6 +599,33 @@ public final class ItemGuard implements Listener {
                 InventoryType.SMITHING, InventoryType.GRINDSTONE, InventoryType.STONECUTTER).contains(type);
     }
     private static EquipmentSlot hand(EquipmentSlot slot) { return slot == null ? EquipmentSlot.HAND : slot; }
+
+    private boolean denyEquip(Player player, ItemStack stack, EquipmentSlot slot) {
+        return !items().canEquip(stack, slot) || deny(player, stack);
+    }
+
+    private static EquipmentSlot armourSlot(int slot) {
+        return switch (slot) {
+            case 36 -> EquipmentSlot.FEET;
+            case 37 -> EquipmentSlot.LEGS;
+            case 38 -> EquipmentSlot.CHEST;
+            case 39 -> EquipmentSlot.HEAD;
+            default -> null;
+        };
+    }
+
+    private static boolean armourSlot(EquipmentSlot slot) {
+        return slot == EquipmentSlot.HEAD || slot == EquipmentSlot.CHEST
+                || slot == EquipmentSlot.LEGS || slot == EquipmentSlot.FEET;
+    }
+
+    private static boolean empty(ItemStack stack) { return stack == null || stack.isEmpty(); }
+
+    private static EquipmentSlot nativeEquipSlot(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return null;
+        var equippable = stack.getData(DataComponentTypes.EQUIPPABLE);
+        return equippable == null ? null : equippable.slot();
+    }
 
     private static EquipmentSlot sourceHand(Player player, ItemStack source) {
         EquipmentSlot active = player.getActiveItemHand();

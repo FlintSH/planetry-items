@@ -156,6 +156,9 @@ Types are `ITEM`, `TOOL`, `WEAPON`, `ARMOUR`, `FOOD`, `COSMETIC`, `ADDON`,
 `SPACESUIT`. Spell `ARMOUR` with a U. Only `ARMOUR`, `COSMETIC`, `SPACESUIT`
 are wearable types and accept `equip-slot`. BODY is an animal slot and cannot
 be used as player `equip-slot`.
+Other managed types cannot occupy worn armour slots, even when their material
+is a player head, carved pumpkin or vanilla armour. Wearables must match their
+configured slot. Holding items in either hand remains allowed.
 
 The type supplies a lore label and participates in use handling. It does not
 create food nutrition, custom abilities, recipes, mining mechanics or oxygen
@@ -385,12 +388,18 @@ require 1. Custom durability is independent of the material's native durability.
 Native item damage/repair cannot overwrite it, and vanilla Unbreaking/Mending
 does not extend/refill the custom counter.
 
-One point is spent on an accepted melee hit with damage, block break, activated
-right-click, entity interaction, projectile use or applicable wearing-damage
-event. Gliding spends one point per second on the managed chest item. Shields
+One point is spent on an accepted melee hit with damage, block break, completed
+tool action (shearing, tilling, stripping or making paths), projectile use or
+applicable wearing-damage event. General air/block/entity clicks spend nothing.
+Gliding spends one point per second on the managed chest item. Shields
 also spend a point on fully blocked hits. Cancelled/protected actions do not
 spend one; food, equipment and ranged items use their completion-specific paths
 instead of spending twice on the initial click. Bow ammunition remains separate.
+Brushes and pig/strider control sticks spend one custom point only when Minecraft
+reports native wear for a completed special use. Native Unbreaking can suppress
+that signal. Ordinary clicks and cancelled/zero native wear spend nothing.
+When a control stick exhausts its custom counter, Minecraft returns an ordinary
+fishing rod. The replacement retains no custom item identity or metadata.
 
 Food/potions with positive durability return the item with one fewer use;
 zero durability uses normal single-use consumption; unbreakable is reusable.
@@ -399,7 +408,17 @@ source stack. Non-soulbound tridents transfer the remaining counter to the
 thrown item; a break at launch cannot carry the destroyed item. Soulbound
 tridents cannot be thrown.
 
-The final 10%, with at least the final point, uses the low-durability template.
+Minecraft's normal durability bar mirrors the custom counter on ordinary breakable
+single items, including materials without native durability. Bundles keep their
+native fullness bar; their custom durability is shown in lore. Full durability
+hides the bar; spending a point updates it without changing the saved counter
+or adding native wear. Refresh, migration and serialization preserve the ratio.
+Elytra and tridents scale native capacity and damage equally so Minecraft's
+last-point usability check cannot disable their final custom use. Native damage
+and Mending cannot spend or repair only the display.
+An old oversized stack awaiting a safe migration split gains its bar after the
+split, because Minecraft forbids damage components on stackable items.
+The final 30%, with at least the final point, uses the low-durability template.
 At exhaustion the item disappears with normal break animation/particles and
 sound. Unbreakable items show neither a custom counter nor a vanilla
 Unbreakable tooltip. There is no repair/refill command.

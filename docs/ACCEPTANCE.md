@@ -72,13 +72,30 @@ legacy-name reloads preserve protections. Mixed alias reloads retain the active
 catalog. Info probes check the short detail labels and both old/new template
 substitutions in an existing custom header.
 
+Issue18 probes keep counters unchanged for general air/block/entity clicks in
+both hands, including cancelled inputs. Combat, mining and other completion
+events retain positive and cancelled controls. Native damage components mirror
+the custom counter through use, repeated refresh, serialization and migration,
+including actual native bar visibility and width, final usable glider/trident
+points, single/large maxima and cancelled Mending. Native bundle fullness bars
+remain outside the durability-bar assertion;
+the low-lore boundary is checked at 30% and the final point. Equipment probes
+include nonwearable heads, pumpkins and native armour, stale equipment metadata,
+valid wearable controls and inventory/dispenser/restored-inventory routes.
+Special-tool controls cover both hands and positive/cancelled/zero native wear.
+The actual native empty-stack conversion of each exhausted control stick must
+return an ordinary fishing rod without reviving custom identity or metadata.
+
 Before live installation, the operator should test on staging with the same
 Paper/Purpur version, actual Nexo1.22+/resource pack, AuraSkills2.4.0, PlanetryCore,
 Inventory Sync and protection plugins used by the network:
 
 1. Give every configured item to two players with different game/skill levels.
    Check glyph fonts, models, head textures, small type labels, attribute colours,
-   one blank between sections, hidden met requirements and red final durability.
+   one blank between sections, hidden met requirements and red durability at 30%.
+   Confirm the normal durability bar matches the custom counter and refresh does
+   not repair it. Full, unbreakable and counter-disabled items show no spent
+   durability bar; bundles keep Minecraft's fullness bar.
    Soulbound items must show ` • ѕᴏᴜʟʙᴏᴜɴᴅ` after the type on the same line,
    with the label in `#B589D6`; ordinary items must have no suffix or separator.
 2. Try both hands, shift/number/drag equipment moves, right-click equip, dispensers,
@@ -89,6 +106,11 @@ Inventory Sync and protection plugins used by the network:
 3. Exercise melee/mining/protected blocks, food, bows/tridents, shields, wearable
    damage and item break effects. Confirm one use consumed, cancellations do not
    spend one, and AuraSkills stats return to their previous value after removal.
+   Click air, blocks and entities with a sword/tool in each hand and confirm no
+   wear until an action completes. Check actual shearing, tilling, stripping and
+   path creation, including protection-plugin cancellation. Custom nonwearable
+   heads, pumpkins and native armour must stay holdable but never equip; valid
+   ARMOUR/COSMETIC/SPACESUIT items must still equip in their configured slot.
 4. Edit definitions in nested `items/` folders, reload, and try `/migrate` as a
    non-admin. Check current material/model, all info fields, the two-hour per-backend
    cooldown, durability preservation and safe stack splitting when space is limited.

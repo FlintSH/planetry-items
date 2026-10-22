@@ -126,6 +126,15 @@ def test_items():
     equip-slot: CHEST
     max-stack-size: 1
     max-durability: 3
+  single_glider:
+    material: ELYTRA
+    type: ARMOUR
+    equip-slot: CHEST
+    max-durability: 1
+  huge_trident:
+    material: TRIDENT
+    type: WEAPON
+    max-durability: 2147483647
   restricted_glider:
     material: ELYTRA
     type: ARMOUR
@@ -151,6 +160,68 @@ def test_items():
     rarity: UNCOMMON
     max-stack-size: 1
     max-durability: 3
+  brush:
+    material: BRUSH
+    type: TOOL
+    max-durability: 3
+  pig_control:
+    material: CARROT_ON_A_STICK
+    type: TOOL
+    max-durability: 3
+  strider_control:
+    material: WARPED_FUNGUS_ON_A_STICK
+    type: TOOL
+    max-durability: 3
+  durability_sword:
+    material: DIAMOND_SWORD
+    type: WEAPON
+    rarity: UNCOMMON
+    max-stack-size: 1
+    max-durability: 100
+  shears:
+    material: SHEARS
+    type: TOOL
+    rarity: COMMON
+    max-stack-size: 1
+    max-durability: 3
+  axe:
+    material: DIAMOND_AXE
+    type: TOOL
+    rarity: COMMON
+    max-stack-size: 1
+    max-durability: 3
+  hoe:
+    material: DIAMOND_HOE
+    type: TOOL
+    rarity: COMMON
+    max-stack-size: 1
+    max-durability: 3
+  shovel:
+    material: DIAMOND_SHOVEL
+    type: TOOL
+    rarity: COMMON
+    max-stack-size: 1
+    max-durability: 3
+  flint:
+    material: FLINT_AND_STEEL
+    type: TOOL
+    rarity: COMMON
+    max-stack-size: 1
+    max-durability: 3
+  fishing_rod:
+    material: FISHING_ROD
+    type: TOOL
+    rarity: COMMON
+    max-stack-size: 1
+    max-durability: 10
+  restricted_fishing_rod:
+    material: FISHING_ROD
+    type: TOOL
+    rarity: COMMON
+    max-stack-size: 1
+    max-durability: 10
+    requirements:
+      planetry-gamelevel: 5
   eternal:
     material: STICK
     type: TOOL
@@ -281,6 +352,21 @@ def test_items():
     equip-slot: HEAD
     max-stack-size: 1
     base64: '{texture}'
+  ordinary_head:
+    material: PLAYER_HEAD
+    type: ITEM
+    rarity: COMMON
+    max-stack-size: 1
+  ordinary_pumpkin:
+    material: CARVED_PUMPKIN
+    type: ITEM
+    rarity: COMMON
+    max-stack-size: 1
+  ordinary_helmet:
+    material: DIAMOND_HELMET
+    type: ITEM
+    rarity: COMMON
+    max-stack-size: 1
   nexo:
     material: PAPER
     nexo-id: probe_texture

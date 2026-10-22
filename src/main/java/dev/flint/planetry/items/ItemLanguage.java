@@ -246,7 +246,8 @@ public final class ItemLanguage {
 
         if (!definition.unbreakable() && definition.maxDurability() > 0) {
             int remaining = Math.max(0, Math.min(current, definition.maxDurability()));
-            String key = remaining <= Math.max(1, definition.maxDurability() / 10.0) ? "lore.durability-low" : "lore.durability";
+            String key = remaining <= 1 || remaining * 10L <= definition.maxDurability() * 3L
+                    ? "lore.durability-low" : "lore.durability";
             result.add(text(key, Map.of("current", Integer.toString(remaining), "max", Integer.toString(definition.maxDurability())), glyphResolver, target));
         }
         return List.copyOf(result);

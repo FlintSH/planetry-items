@@ -201,7 +201,7 @@ and permissions are covered in the [language guide](LANGUAGE.md#nexo-glyphs-and-
 | Old item still looks different | A partial migration may be waiting for source/space; periodic refresh alone does not rebuild all visuals |
 | Migration incomplete | Free storage for split stacks, clear oversized cursor stacks, and check missing Nexo sources; retry |
 | Item disappeared after update/server switch | Compare IDs/catalogs on every backend; restore missing definitions to prevent further removals and review inventory backups |
-| Equipped item moved or dropped | Player lost requirements; check storage capacity and Core/AuraSkills availability; full storage leaves soulbound equipment worn without native attributes or AuraSkills bonuses until space opens |
+| Equipped item moved or dropped | Player lost requirements or item no longer matches its worn slot/type; check definition, storage capacity and Core/AuraSkills availability; full storage leaves soulbound equipment worn without native attributes or AuraSkills bonuses until space opens |
 | Item will not place, with no message | Check `canplace` and `soulbound`; blocked placement spends no item or custom durability |
 | Soulbound item will not enter a chest or drop | External writes and world deposits are blocked, including carriers with nested soulbound contents; own ender chest and safe retrieval remain available |
 | Staff drop override does not work | Use a player with `planetry.admin.items`, enable `/pitems soulboundbypass`, then repeat an identical item/amount drop within two seconds; reconnects, reload and death reset it |

@@ -185,6 +185,9 @@ Types: `ITEM`, `TOOL`, `WEAPON`, `ARMOUR`, `FOOD`, `COSMETIC`, `ADDON`, `SPACESU
 Wearable types support `HEAD`, `CHEST`, `LEGS`, `FEET` or `OFF_HAND`, defaulting to
 `HEAD`. Paper's native equippable component lets materials such as PAPER occupy
 the configured slot. A worn visual model still needs an appropriate resource pack.
+Only `ARMOUR`, `COSMETIC` and `SPACESUIT` items can occupy worn armour slots,
+and only their configured slot. Other custom items, including player heads and
+items based on vanilla armour, remain holdable but cannot be worn.
 
 All registered Minecraft attributes can be configured, including newer attributes.
 A number means `ADD_NUMBER`; structured entries support `ADD_NUMBER`, `ADD_SCALAR`
@@ -271,17 +274,24 @@ Breakable items require stack size 1; nondamageable/unbreakable items can stack
 up to 99 (wearables remain size 1). Durability is tracked independently of the vanilla material. Native
 damage and repair cannot silently overwrite it.
 
-One point is spent for each accepted melee hit, block break, activated right
-click, entity interaction, projectile use or wearing damage event, as applicable.
+One point is spent for each accepted melee hit, block break, completed tool
+action (such as shearing, tilling or stripping), projectile use or wearing
+damage event, as applicable. Clicking air, blocks or entities alone spends nothing.
 Gliding spends one point per second on a managed chest item; a shield also spends
 a point on fully blocked hits.
 Food with positive durability returns the same item with one fewer use; food at
 zero durability is a normal single-use consumable. Unbreakable food is reusable.
-Durability is displayed as `Durability: current/max`; the final 10% (at least the
-last point) is red. Exhaustion removes the item and sends the normal equipment
+Durability is displayed as `Durability: current/max` and through Minecraft's
+normal durability bar, using the same custom maximum and remaining value on
+ordinary breakable items, including paper-based ones. Bundles retain Minecraft's
+fullness bar; their custom durability remains in lore. The final 30% (at least
+the last point) is red.
+Exhaustion removes the item and sends the normal equipment
 break animation/particles and sound. A break on projectile launch stops that
 projectile from carrying a destroyed item. This is a use counter, not vanilla
 Unbreaking/Mending durability. Protected/cancelled actions do not spend a point.
+Pig/strider control sticks follow vanilla break conversion into an ordinary
+fishing rod, with no custom item identity carried into that replacement.
 
 Player crafting, anvil, smithing, grindstone and stonecutter result clicks using
 managed items are blocked to preserve identity. This is not an automation or

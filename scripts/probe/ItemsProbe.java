@@ -2,7 +2,10 @@ package dev.flint.planetry.items.probe;
 
 import com.destroystokyo.paper.event.player.PlayerLaunchProjectileEvent;
 import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.Equippable;
+import io.papermc.paper.event.block.PlayerShearBlockEvent;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
+import io.papermc.paper.event.player.PlayerSwapWithEquipmentSlotEvent;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -20,6 +23,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.FishHook;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Trident;
 import org.bukkit.entity.Snowball;
@@ -59,12 +63,18 @@ public final class ItemsProbe extends JavaPlugin {
             metadata();
             requirements();
             durability();
+            nativeDurabilityBar();
             eventDurability();
+            specialToolDurability();
+            nativeControlStickBreak();
+            completedToolActions();
+            completedFishing();
             foodDurability();
             projectileDurability();
             entityAndShieldDurability();
             glidingDurability();
             equipment();
+            equipmentTypes();
             commands();
             policies();
             glyphTemplates();
@@ -206,10 +216,14 @@ public final class ItemsProbe extends JavaPlugin {
         stage = "one-point durability and native break packet";
         ItemStack tool = create("tool"); player.items[0] = tool;
         check(durability(tool) == 3, "Initial custom durability differs");
+        nativeBar(tool, 3, 3);
         check(!damage(tool) && durability(tool) == 2, "First use did not consume exactly one");
+        nativeBar(tool, 3, 2);
         ItemStack saved = ItemStack.deserializeBytes(tool.serializeAsBytes());
         check(durability(saved) == 2, "Durability was not persistent");
+        nativeBar(saved, 3, 2);
         check(!damage(tool) && durability(tool) == 1, "Second use differs");
+        nativeBar(tool, 3, 1);
         check(contains(lore(tool), "Durability: 1/3"), "Current durability absent from lore");
         check(tool.getItemMeta().lore().stream().anyMatch(ItemsProbe::red), "Low durability is not red");
         int breaks = player.breaks, sounds = player.sounds;
@@ -226,16 +240,89 @@ public final class ItemsProbe extends JavaPlugin {
         player.clear(); passed();
     }
 
+    private void nativeDurabilityBar() {
+        stage = "native durability components, early red lore and persistent refresh";
+        ItemStack sword = create("durability_sword"); player.items[0] = sword;
+        nativeBar(sword, 100, 100);
+        check(!damage(sword), "First sword use unexpectedly broke the item");
+        nativeBar(sword, 100, 99);
+        setDurability(sword, 31);
+        call(items, "refresh", sword, player.player);
+        nativeBar(sword, 100, 31);
+        check(!durabilityLineRed(sword), "Durability lore turned red above thirty percent");
+        setDurability(sword, 30);
+        call(items, "refresh", sword, player.player);
+        nativeBar(sword, 100, 30);
+        check(durabilityLineRed(sword), "Durability lore did not turn red at thirty percent");
+        ItemStack saved = ItemStack.deserializeBytes(sword.serializeAsBytes());
+        nativeBar(saved, 100, 30);
+        check(durability(saved) == 30 && durabilityLineRed(saved), "Serialized sword lost counter or early warning lore");
+        saved.setData(DataComponentTypes.MAX_DAMAGE, 300);
+        saved.setData(DataComponentTypes.DAMAGE, 2);
+        call(items, "refresh", saved, player.player);
+        nativeBar(saved, 100, 30);
+        ItemStack refreshed = saved.clone();
+        for (int n = 0; n < 3; n++) call(items, "refresh", saved, player.player);
+        check(saved.equals(refreshed), "Repeated refresh repaired or changed the remaining durability");
+        saved.setType(Material.STICK);
+        saved.unsetData(DataComponentTypes.MAX_DAMAGE);
+        saved.unsetData(DataComponentTypes.DAMAGE);
+        ItemStack migrated = (ItemStack) call(items, "migrate", saved, player.player);
+        check(migrated.getType() == Material.DIAMOND_SWORD && durability(migrated) == 30,
+                "Migration lost native material or repaired custom durability");
+        nativeBar(migrated, 100, 30);
+        nativeBar(ItemStack.deserializeBytes(migrated.serializeAsBytes()), 100, 30);
+        for (String id : List.of("tool", "hat", "food_durable", "trident", "shield", "glider", "single_glider", "huge_trident")) {
+            ItemStack item = create(id);
+            int max = durability(item);
+            nativeBar(item, max, max);
+            if (max > 1) {
+                damage(item);
+                nativeBar(item, max, max - 1);
+                setDurability(item, 1); call(items, "refresh", item, player.player);
+                nativeBar(item, max, 1);
+            }
+        }
+        org.bukkit.entity.ExperienceOrb orb = Bukkit.getWorlds().getFirst().spawn(
+                Bukkit.getWorlds().getFirst().getSpawnLocation(), org.bukkit.entity.ExperienceOrb.class);
+        try {
+            PlayerItemMendEvent mend = new PlayerItemMendEvent(player.player, sword, EquipmentSlot.HAND, orb, 2);
+            denied(mend, "mending only the native bar");
+            nativeBar(sword, 100, 30);
+            check(durability(sword) == 30, "Mending changed the custom counter");
+            PlayerItemMendEvent vanilla = new PlayerItemMendEvent(player.player, ItemStack.of(Material.DIAMOND_SWORD),
+                    EquipmentSlot.HAND, orb, 2);
+            fire(vanilla); check(!vanilla.isCancelled(), "Managed mending guard affected vanilla items");
+        } finally { orb.remove(); }
+        player.clear(); passed();
+    }
+
     private void eventDurability() {
-        stage = "successful/cancelled use events";
-        ItemStack airTool = create("tool"); player.items[0] = airTool;
-        PlayerInteractEvent airUse = new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_AIR, airTool, null, BlockFace.SELF, EquipmentSlot.HAND);
-        fire(airUse);
-        check(airUse.useItemInHand() != Event.Result.DENY && durability(airTool) == 2,
-                "Allowed right-click air use was mistaken for a cancelled block interaction");
-        PlayerInteractEvent deniedAir = new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_AIR, airTool, null, BlockFace.SELF, EquipmentSlot.HAND);
-        deniedAir.setCancelled(true); fire(deniedAir);
-        check(durability(airTool) == 2, "Explicitly denied right-click air use consumed durability");
+        stage = "input clicks do not wear items; completion and cancellation charge once";
+        for (String id : List.of("tool", "durability_sword", "hat", "food_durable", "bow", "trident", "shield")) {
+            if (id.equals("bow") && !integrations) continue;
+            levels(20);
+            ItemStack item = create(id); int remaining = durability(item);
+            for (EquipmentSlot hand : List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND)) {
+                player.items[0] = null; player.items[40] = null;
+                player.items[hand == EquipmentSlot.HAND ? 0 : 40] = item;
+                for (Action action : List.of(Action.LEFT_CLICK_AIR, Action.LEFT_CLICK_BLOCK, Action.RIGHT_CLICK_AIR, Action.RIGHT_CLICK_BLOCK)) {
+                    boolean block = action == Action.LEFT_CLICK_BLOCK || action == Action.RIGHT_CLICK_BLOCK;
+                    PlayerInteractEvent click = new PlayerInteractEvent(player.player, action, item,
+                            block ? Bukkit.getWorlds().getFirst().getSpawnLocation().getBlock() : null,
+                            block ? BlockFace.UP : BlockFace.SELF, hand);
+                    fire(click);
+                    check(click.useItemInHand() != Event.Result.DENY && durability(item) == remaining,
+                            "Input click was blocked or spent durability before completion: " + id + "/" + action + "/" + hand);
+                    PlayerInteractEvent cancelled = new PlayerInteractEvent(player.player, action, item,
+                            block ? Bukkit.getWorlds().getFirst().getSpawnLocation().getBlock() : null,
+                            block ? BlockFace.UP : BlockFace.SELF, hand);
+                    cancelled.setCancelled(true); fire(cancelled);
+                    check(durability(item) == remaining, "Cancelled input click spent durability: " + id + "/" + action);
+                }
+            }
+        }
+        player.clear();
         ItemStack tool = create("tool"); player.items[0] = tool;
         PlayerItemDamageEvent nativeDamage = new PlayerItemDamageEvent(player.player, tool, 7, 7);
         denied(nativeDamage, "vanilla double damage");
@@ -243,14 +330,153 @@ public final class ItemsProbe extends JavaPlugin {
         BlockBreakEvent cancelled = new BlockBreakEvent(Bukkit.getWorlds().getFirst().getSpawnLocation().getBlock(), player.player);
         cancelled.setCancelled(true); fire(cancelled);
         check(durability(tool) == 3, "Cancelled protected break consumed durability");
+        EntityDamageByEntityEvent cancelledAttack = new EntityDamageByEntityEvent(player.player, entity(),
+                EntityDamageEvent.DamageCause.ENTITY_ATTACK, source(), 4);
+        cancelledAttack.setCancelled(true); fire(cancelledAttack);
+        fire(new EntityDamageByEntityEvent(player.player, entity(), EntityDamageEvent.DamageCause.ENTITY_ATTACK, source(), 0));
+        check(durability(tool) == 3, "Cancelled or zero-damage melee spent durability");
         fire(new BlockBreakEvent(Bukkit.getWorlds().getFirst().getSpawnLocation().getBlock(), player.player));
         check(durability(tool) == 2, "Successful mining did not consume one point");
         fire(new EntityDamageByEntityEvent(player.player, entity(), EntityDamageEvent.DamageCause.ENTITY_ATTACK, source(), 4));
         check(durability(tool) == 1, "Successful melee did not consume one point");
+        nativeBar(tool, 3, 1);
         player.clear();
         ItemStack hat = create("hat"); player.items[39] = hat;
+        EntityDamageEvent cancelledWear = new EntityDamageEvent(player.player, EntityDamageEvent.DamageCause.FALL, source(), 2);
+        cancelledWear.setCancelled(true); fire(cancelledWear);
+        fire(new EntityDamageEvent(player.player, EntityDamageEvent.DamageCause.FALL, source(), 0));
+        check(durability(hat) == 10, "Cancelled or zero damage spent worn item durability");
         fire(new EntityDamageEvent(player.player, EntityDamageEvent.DamageCause.FALL, source(), 2));
         check(durability(hat) == 9, "Worn item damage did not consume one point");
+        nativeBar(hat, 10, 9);
+        player.clear(); passed();
+    }
+
+    private void specialToolDurability() {
+        stage = "special native tool wear confirms actual use without charging input clicks";
+        for (String id : List.of("brush", "pig_control", "strider_control")) {
+            for (EquipmentSlot hand : List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND)) {
+                player.clear();
+                ItemStack item = create(id); player.items[hand == EquipmentSlot.HAND ? 0 : 40] = item;
+                fire(new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_AIR, item, null, BlockFace.SELF, hand));
+                check(durability(item) == 3, "Special tool input spent durability: " + id);
+                PlayerItemDamageEvent cancelled = new PlayerItemDamageEvent(player.player, item, 1, 1);
+                cancelled.setCancelled(true); fire(cancelled);
+                fire(new PlayerItemDamageEvent(player.player, item, 0, 1));
+                check(durability(item) == 3, "Cancelled/zero native tool wear spent durability: " + id);
+                PlayerItemDamageEvent used = new PlayerItemDamageEvent(player.player, item, 7, 7);
+                denied(used, "automatic special-tool damage");
+                check(durability(item) == 2, "Confirmed special-tool wear did not spend exactly one point: " + id);
+                nativeBar(item, 3, 2);
+            }
+        }
+        player.clear(); passed();
+    }
+
+    private void nativeControlStickBreak() throws Exception {
+        stage = "native exhausted control-stick conversion cannot revive custom identity";
+        Class<?> craft = Class.forName("org.bukkit.craftbukkit.inventory.CraftItemStack");
+        Class<?> nativeType = Class.forName("net.minecraft.world.item.ItemStack");
+        Class<?> itemLike = Class.forName("net.minecraft.world.level.ItemLike");
+        Object fishingRod = Class.forName("net.minecraft.world.item.Items").getField("FISHING_ROD").get(null);
+        for (String id : List.of("pig_control", "strider_control")) {
+            for (EquipmentSlot hand : List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND)) {
+                player.clear();
+                // Retain the exact native source BEFORE it empties. Copying an empty Bukkit
+                // item afterwards would erase the broken patch and conceal a resurrection bug.
+                Object nativeSource = craft.getMethod("asNMSCopy", ItemStack.class).invoke(null, create(id));
+                ItemStack held = (ItemStack) craft.getMethod("asCraftMirror", nativeType).invoke(null, nativeSource);
+                player.items[hand == EquipmentSlot.HAND ? 0 : 40] = held;
+                damage(held); damage(held);
+                check(durability(held) == 1, "Control-stick final-use fixture is not at one point");
+                denied(new PlayerItemDamageEvent(player.player, held, 7, 7), "native last-point control-stick wear");
+                check(empty(held), "Final control-stick use did not exhaust the exact native stack");
+                // These are the pinned native hurtAndConvertOnBreak post-event operations.
+                Method transmute = nativeType.getDeclaredMethod("transmuteCopyIgnoreEmpty", itemLike, int.class);
+                transmute.setAccessible(true);
+                Object replacement = transmute.invoke(nativeSource, fishingRod, 1);
+                nativeType.getMethod("setDamageValue", int.class).invoke(replacement, 0);
+                ItemStack converted = (ItemStack) craft.getMethod("asCraftMirror", nativeType).invoke(null, replacement);
+                check(converted.equals(ItemStack.of(Material.FISHING_ROD)) && definition(converted) == null,
+                        "Native control-stick conversion revived custom metadata/identity instead of an ordinary rod");
+            }
+        }
+        player.clear(); passed();
+    }
+
+    private void completedToolActions() {
+        stage = "confirmed shearing and block tool actions charge their actual hand once";
+        var block = Bukkit.getWorlds().getFirst().getSpawnLocation().getBlock();
+        for (EquipmentSlot hand : List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND)) {
+            for (boolean entityShear : List.of(true, false)) {
+                player.clear(); ItemStack shears = create("shears");
+                player.items[hand == EquipmentSlot.HAND ? 0 : 40] = shears;
+                fire(new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_BLOCK, shears, block, BlockFace.UP, hand));
+                fire(new PlayerInteractEntityEvent(player.player, entity(), hand));
+                check(durability(shears) == 3, "Shears input spent durability before confirmed shearing");
+                Event cancelled = entityShear
+                        ? new PlayerShearEntityEvent(player.player, entity(), shears.clone(), hand, new ArrayList<>())
+                        : new PlayerShearBlockEvent(player.player, block, shears.clone(), hand, new ArrayList<>());
+                ((Cancellable) cancelled).setCancelled(true); fire(cancelled);
+                check(durability(shears) == 3, "Cancelled shearing spent durability");
+                Event completed = entityShear
+                        ? new PlayerShearEntityEvent(player.player, entity(), shears.clone(), hand, new ArrayList<>())
+                        : new PlayerShearBlockEvent(player.player, block, shears.clone(), hand, new ArrayList<>());
+                fire(completed);
+                check(!((Cancellable) completed).isCancelled() && durability(shears) == 2,
+                        "Confirmed shearing did not charge exactly one point on actual held stack: " + entityShear + "/" + hand);
+                nativeBar(shears, 3, 2);
+            }
+            for (String id : List.of("axe", "hoe", "shovel", "flint")) {
+                player.clear(); ItemStack tool = create(id);
+                player.items[hand == EquipmentSlot.HAND ? 0 : 40] = tool;
+                fire(new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_BLOCK, tool, block, BlockFace.UP, hand));
+                check(durability(tool) == 3, "Block tool input spent durability before confirmation: " + id);
+                BlockPlaceEvent cancelled = new BlockPlaceEvent(block, block.getState(), block, tool.clone(), player.player, true, hand);
+                cancelled.setCancelled(true); fire(cancelled);
+                BlockPlaceEvent protectedBlock = new BlockPlaceEvent(block, block.getState(), block, tool.clone(), player.player, false, hand);
+                fire(protectedBlock);
+                check(durability(tool) == 3, "Cancelled or protected block tool action spent durability: " + id);
+                BlockPlaceEvent completed = new BlockPlaceEvent(block, block.getState(), block, tool.clone(), player.player, true, hand);
+                fire(completed);
+                check(!completed.isCancelled() && durability(tool) == 2,
+                        "Confirmed block tool action did not spend exactly one actual-hand point: " + id + "/" + hand);
+                nativeBar(tool, 3, 2);
+            }
+        }
+        player.clear(); passed();
+    }
+
+    private void completedFishing() {
+        stage = "fishing completion, cancellation and same-reel duplicate protection";
+        for (EquipmentSlot hand : List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND)) {
+            player.clear(); ItemStack rod = create("fishing_rod");
+            player.items[hand == EquipmentSlot.HAND ? 0 : 40] = rod;
+            for (PlayerFishEvent.State state : List.of(PlayerFishEvent.State.FISHING, PlayerFishEvent.State.BITE,
+                    PlayerFishEvent.State.LURED, PlayerFishEvent.State.REEL_IN, PlayerFishEvent.State.FAILED_ATTEMPT)) {
+                fire(new PlayerFishEvent(player.player, null, fishHook(), hand, state));
+                check(durability(rod) == 10, "Fishing input/noncatch state spent durability: " + state);
+            }
+            FishHook hook = fishHook();
+            PlayerFishEvent cancelled = new PlayerFishEvent(player.player, entity(), hook, hand, PlayerFishEvent.State.CAUGHT_FISH);
+            cancelled.setCancelled(true); fire(cancelled);
+            check(durability(rod) == 10, "Cancelled catch spent durability");
+            fire(new PlayerFishEvent(player.player, entity(), hook, hand, PlayerFishEvent.State.CAUGHT_FISH));
+            check(durability(rod) == 9, "Completed catch did not spend one actual-hand point");
+            fire(new PlayerFishEvent(player.player, entity(), hook, hand, PlayerFishEvent.State.CAUGHT_FISH));
+            fire(new PlayerFishEvent(player.player, entity(), hook, hand, PlayerFishEvent.State.CAUGHT_ENTITY));
+            check(durability(rod) == 9, "Same hook/tick catch completion spent more than one point");
+            fire(new PlayerFishEvent(player.player, entity(), fishHook(), hand, PlayerFishEvent.State.CAUGHT_ENTITY));
+            check(durability(rod) == 8, "Completed entity catch did not spend one point");
+            fire(new PlayerFishEvent(player.player, null, fishHook(), hand, PlayerFishEvent.State.IN_GROUND));
+            check(durability(rod) == 7, "Completed in-ground reel did not spend one point");
+            nativeBar(rod, 10, 7);
+            levels(1); ItemStack restricted = create("restricted_fishing_rod");
+            player.items[hand == EquipmentSlot.HAND ? 0 : 40] = restricted;
+            denied(new PlayerFishEvent(player.player, entity(), fishHook(), hand, PlayerFishEvent.State.CAUGHT_FISH),
+                    "restricted fishing catch");
+            check(durability(restricted) == 10, "Restricted fishing consumed durability");
+        }
         player.clear(); passed();
     }
 
@@ -273,6 +499,98 @@ public final class ItemsProbe extends JavaPlugin {
         player.clear(); passed();
     }
 
+    private void equipmentTypes() {
+        stage = "only wearable definitions equip; native defaults and restored components are removed";
+        var dispenser = Bukkit.getWorlds().getFirst().getSpawnLocation().getBlock();
+        for (String id : List.of("ordinary_head", "ordinary_pumpkin", "ordinary_helmet")) {
+            player.clear();
+            ItemStack item = create(id);
+            check(!item.hasData(DataComponentTypes.EQUIPPABLE), "Native material made a nonwearable definition equippable: " + id);
+            ItemStack saved = ItemStack.deserializeBytes(item.serializeAsBytes());
+            check(!saved.hasData(DataComponentTypes.EQUIPPABLE) && definition(saved) != null,
+                    "Serialization restored native equipment defaults: " + id);
+            saved.setData(DataComponentTypes.EQUIPPABLE, Equippable.equippable(EquipmentSlot.HEAD).build());
+            call(items, "refresh", saved, player.player);
+            check(!saved.hasData(DataComponentTypes.EQUIPPABLE), "Refresh retained stale equippable component: " + id);
+            saved.setData(DataComponentTypes.EQUIPPABLE, Equippable.equippable(EquipmentSlot.HEAD).build());
+            ItemStack migrated = (ItemStack) call(items, "migrate", saved, player.player);
+            check(!migrated.hasData(DataComponentTypes.EQUIPPABLE), "Migration retained stale/native equipment defaults: " + id);
+            ItemStack vanilla = ItemStack.of(item.getType()), original = vanilla.clone();
+            check(vanilla.hasData(DataComponentTypes.EQUIPPABLE), "Native equipment positive control has no component: " + id);
+            call(items, "refresh", vanilla, player.player);
+            check(vanilla.equals(original), "Managed-item refresh modified vanilla equipment: " + id);
+
+            item.setData(DataComponentTypes.EQUIPPABLE, Equippable.equippable(EquipmentSlot.HEAD).build());
+            player.cursor = item;
+            denied(new InventoryClickEvent(player.view, InventoryType.SlotType.ARMOR, 5, ClickType.LEFT, InventoryAction.PLACE_ALL),
+                    "nonwearable armor click: " + id);
+            denied(new InventoryDragEvent(player.view, null, item, false, Map.of(5, item)), "nonwearable armor drag: " + id);
+            player.cursor = null; player.items[1] = item;
+            denied(new InventoryClickEvent(player.view, InventoryType.SlotType.ARMOR, 5, ClickType.NUMBER_KEY, InventoryAction.HOTBAR_SWAP, 1),
+                    "nonwearable number-key armor: " + id);
+            item.setData(DataComponentTypes.EQUIPPABLE, Equippable.equippable(EquipmentSlot.HEAD).build());
+            denied(new InventoryClickEvent(player.view, InventoryType.SlotType.QUICKBAR, 37, ClickType.SHIFT_LEFT, InventoryAction.MOVE_TO_OTHER_INVENTORY),
+                    "nonwearable native shift-equip: " + id);
+            player.items[40] = item;
+            denied(new InventoryClickEvent(player.view, InventoryType.SlotType.ARMOR, 5, ClickType.SWAP_OFFHAND, InventoryAction.HOTBAR_SWAP),
+                    "nonwearable offhand-key armor: " + id);
+            denied(new PlayerSwapWithEquipmentSlotEvent(player.player, item, EquipmentSlot.HEAD, ItemStack.of(Material.AIR)),
+                    "nonwearable interact-equip swap: " + id);
+            item.setData(DataComponentTypes.EQUIPPABLE, Equippable.equippable(EquipmentSlot.HEAD).build());
+            denied(new BlockDispenseArmorEvent(dispenser, item, player.player), "nonwearable dispenser equip: " + id);
+
+            player.clear(); player.cursor = create(id);
+            InventoryClickEvent hold = new InventoryClickEvent(player.view, InventoryType.SlotType.QUICKBAR,
+                    36, ClickType.LEFT, InventoryAction.PLACE_ALL);
+            fire(hold); check(!hold.isCancelled(), "Nonwearable item could not move to the hand: " + id);
+            InventoryDragEvent offhand = new InventoryDragEvent(player.view, null, player.cursor, false, Map.of(45, player.cursor));
+            fire(offhand); check(!offhand.isCancelled(), "Nonwearable item could not move to offhand: " + id);
+            PlayerSwapWithEquipmentSlotEvent handSwap = new PlayerSwapWithEquipmentSlotEvent(player.player, player.cursor,
+                    EquipmentSlot.OFF_HAND, ItemStack.of(Material.AIR));
+            fire(handSwap); check(!handSwap.isCancelled(), "Nonwearable item could not swap to offhand: " + id);
+            player.clear(); ItemStack restored = create(id);
+            restored.setData(DataComponentTypes.EQUIPPABLE, Equippable.equippable(EquipmentSlot.HEAD).build());
+            player.items[39] = restored;
+            call(guard, "reconcile", player.player);
+            check(empty(player.items[39]) && player.count(id) == 1,
+                    "Restored nonwearable equipment was not safely returned to storage: " + id);
+            ItemStack returned = Arrays.stream(player.items).filter(value -> !empty(value)).findFirst().orElseThrow();
+            check(!returned.hasData(DataComponentTypes.EQUIPPABLE), "Returned nonwearable retained stale equip component: " + id);
+        }
+        for (String id : List.of("hat", "aura", "skull", "glider")) {
+            player.clear(); ItemStack wearable = create(id);
+            EquipmentSlot slot = id.equals("glider") ? EquipmentSlot.CHEST : EquipmentSlot.HEAD;
+            int raw = slot == EquipmentSlot.CHEST ? 6 : 5;
+            check(wearable.getData(DataComponentTypes.EQUIPPABLE).slot() == slot, "Wearable lost configured slot: " + id);
+            player.cursor = wearable;
+            InventoryClickEvent click = new InventoryClickEvent(player.view, InventoryType.SlotType.ARMOR, raw,
+                    ClickType.LEFT, InventoryAction.PLACE_ALL);
+            fire(click); check(!click.isCancelled(), "Valid wearable armor click was denied: " + id);
+            InventoryDragEvent drag = new InventoryDragEvent(player.view, null, wearable, false, Map.of(raw, wearable));
+            fire(drag); check(!drag.isCancelled(), "Valid wearable armor drag was denied: " + id);
+            PlayerSwapWithEquipmentSlotEvent swap = new PlayerSwapWithEquipmentSlotEvent(player.player, wearable, slot, ItemStack.of(Material.AIR));
+            fire(swap); check(!swap.isCancelled(), "Valid wearable interact-equip was denied: " + id);
+            BlockDispenseArmorEvent dispense = new BlockDispenseArmorEvent(dispenser, wearable, player.player);
+            fire(dispense); check(!dispense.isCancelled(), "Valid wearable dispenser equip was denied: " + id);
+            denied(new InventoryClickEvent(player.view, InventoryType.SlotType.ARMOR, slot == EquipmentSlot.CHEST ? 5 : 6,
+                    ClickType.LEFT, InventoryAction.PLACE_ALL), "wearable in wrong configured slot: " + id);
+            player.cursor = null; player.items[slot == EquipmentSlot.CHEST ? 38 : 39] = wearable;
+            call(guard, "reconcile", player.player);
+            check(!empty(player.items[slot == EquipmentSlot.CHEST ? 38 : 39]), "Reconcile removed valid wearable: " + id);
+        }
+        player.clear(); player.cursor = ItemStack.of(Material.DIAMOND_HELMET);
+        InventoryClickEvent vanillaClick = new InventoryClickEvent(player.view, InventoryType.SlotType.ARMOR,
+                5, ClickType.LEFT, InventoryAction.PLACE_ALL);
+        fire(vanillaClick); check(!vanillaClick.isCancelled(), "Ordinary vanilla helmet equip was denied");
+        Fake chest = new Fake("EquipmentChestProbe", false); chest.viewType = InventoryType.CHEST;
+        chest.items[0] = create("ordinary_head");
+        chest.items[0].setData(DataComponentTypes.EQUIPPABLE, Equippable.equippable(EquipmentSlot.HEAD).build());
+        InventoryClickEvent externalMove = new InventoryClickEvent(chest.view, InventoryType.SlotType.QUICKBAR,
+                36, ClickType.SHIFT_LEFT, InventoryAction.MOVE_TO_OTHER_INVENTORY);
+        fire(externalMove); check(!externalMove.isCancelled(), "Nonwearable external-inventory shift move was mistaken for equipment");
+        player.clear(); passed();
+    }
+
     private void foodDurability() {
         stage = "food completion preserves remaining durability";
         ItemStack food = create("food_durable"); player.items[0] = food;
@@ -283,6 +601,7 @@ public final class ItemsProbe extends JavaPlugin {
         fire(first);
         check(!first.isCancelled() && !empty(first.getReplacement()) && durability(first.getReplacement()) == 1,
                 "First food completion did not supply a one-point remaining replacement");
+        nativeBar(first.getReplacement(), 2, 1);
         check(definition(first.getReplacement()) != null, "Food replacement lost custom item identity");
         // Paper applies the replacement after the callback; emulate that documented boundary.
         player.items[0] = first.getReplacement();
@@ -325,8 +644,10 @@ public final class ItemsProbe extends JavaPlugin {
             PlayerLaunchProjectileEvent launch = new PlayerLaunchProjectileEvent(player.player, trident, projectile);
             fire(launch);
             check(!launch.isCancelled() && durability(trident) == 2, "Successful trident launch did not consume one point");
+            nativeBar(trident, 3, 2);
             check(durability(projectile.getItemStack()) == 2 && definition(projectile.getItemStack()) != null,
                     "Real Paper projectile pickup stack lost durability/identity");
+            nativeBar(projectile.getItemStack(), 3, 2);
             // Pinned Paper's native throw path assigns its pre-event copy after dispatch.
             // Reproduce that boundary; the plugin's next-tick repair must restore the spent point.
             projectile.setItemStack(oldCarry);
@@ -336,6 +657,7 @@ public final class ItemsProbe extends JavaPlugin {
             PlayerRiptideEvent spin = new PlayerRiptideEvent(player.player, riptide, new org.bukkit.util.Vector(0, 1, 0));
             fire(spin);
             check(!spin.isCancelled() && durability(riptide) == 2, "Riptide did not consume exactly one point");
+            nativeBar(riptide, 3, 2);
             PlayerLaunchProjectileEvent protectedLaunch = new PlayerLaunchProjectileEvent(player.player, riptide, projectile);
             protectedLaunch.setCancelled(true); fire(protectedLaunch);
             check(durability(riptide) == 2, "Cancelled launch consumed durability");
@@ -360,6 +682,7 @@ public final class ItemsProbe extends JavaPlugin {
             fire(launch);
             check(!launch.isCancelled() && !launch.shouldConsume() && durability(source) == 2,
                     "Durable throwable was consumed or charged more than one point");
+            nativeBar(source, 3, 2);
             ItemStack ordinary = create("throwable_plain"); player.items[0] = ordinary;
             PlayerLaunchProjectileEvent plain = new PlayerLaunchProjectileEvent(player.player, ordinary, snowball);
             fire(plain);
@@ -369,26 +692,30 @@ public final class ItemsProbe extends JavaPlugin {
     }
 
     private void entityAndShieldDurability() {
-        stage = "entity interaction and fully blocked shield damage";
+        stage = "entity input keeps durability and fully blocked shields charge once";
         ItemStack tool = create("tool"); player.items[0] = tool;
         PlayerInteractEntityEvent use = new PlayerInteractEntityEvent(player.player, entity(), EquipmentSlot.HAND);
         fire(use);
-        check(!use.isCancelled() && durability(tool) == 2, "Entity interaction did not consume one point");
+        check(!use.isCancelled() && durability(tool) == 3, "Entity interaction spent durability before actual use");
         PlayerInteractEntityEvent cancelled = new PlayerInteractEntityEvent(player.player, entity(), EquipmentSlot.HAND);
         cancelled.setCancelled(true); fire(cancelled);
-        check(durability(tool) == 2, "Cancelled entity interaction consumed durability");
+        check(durability(tool) == 3, "Cancelled entity interaction consumed durability");
         ItemStack targeted = create("tool"); player.items[0] = targeted; Entity target = entity();
         fire(new PlayerInteractAtEntityEvent(player.player, target, new org.bukkit.util.Vector(0, 1, 0), EquipmentSlot.HAND));
         fire(new PlayerInteractEntityEvent(player.player, target, EquipmentSlot.HAND));
-        check(durability(targeted) == 2, "Entity-at/general event pair charged twice");
+        check(durability(targeted) == 3, "Entity-at/general input pair spent durability");
         player.clear(); ItemStack shield = create("shield"); player.items[40] = shield; player.blocking = true;
         com.google.common.base.Function<Double, Double> zero = ignored -> 0d;
         EntityDamageEvent blocked = new EntityDamageEvent(player.player, EntityDamageEvent.DamageCause.ENTITY_ATTACK, source(),
                 new EnumMap<>(Map.of(EntityDamageEvent.DamageModifier.BASE, 4d, EntityDamageEvent.DamageModifier.BLOCKING, -4d)),
                 new EnumMap<>(Map.of(EntityDamageEvent.DamageModifier.BASE, zero, EntityDamageEvent.DamageModifier.BLOCKING, zero)));
         check(blocked.getDamage() == 4 && blocked.getFinalDamage() == 0, "Invalid fully blocked damage fixture");
+        blocked.setCancelled(true); fire(blocked);
+        check(durability(shield) == 3, "Cancelled shield block spent durability");
+        blocked.setCancelled(false);
         fire(blocked);
         check(durability(shield) == 2, "Fully blocked damage did not wear the active shield once");
+        nativeBar(shield, 3, 2);
         player.blocking = false;
         fire(new EntityDamageEvent(player.player, EntityDamageEvent.DamageCause.ENTITY_ATTACK, source(), 0));
         check(durability(shield) == 2, "Zero damage without blocking wore the shield");
@@ -410,8 +737,10 @@ public final class ItemsProbe extends JavaPlugin {
         player.gliding = true;
         call(guard, "flightTick", player.player);
         check(player.gliding && durability(glider) == 2, "Gliding interval did not spend exactly one point");
+        nativeBar(glider, 3, 2);
         call(guard, "flightTick", player.player);
         check(durability(glider) == 1, "Second gliding interval differs");
+        nativeBar(glider, 3, 1);
         call(guard, "flightTick", player.player);
         check(!player.gliding && empty(glider), "Exhausted elytra did not break and stop gliding");
         player.clear(); passed();
@@ -1421,6 +1750,7 @@ public final class ItemsProbe extends JavaPlugin {
         check(nexo.getItemMeta().getCustomModelDataComponent().getFloats().equals(List.of(991f)), "Nexo custom model data discarded");
         check(nexo.getEnchantments().isEmpty() && nexo.getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(),
                 "Unconfigured Nexo enchantments/attributes leaked into Planetry item");
+        check(!nexo.hasData(DataComponentTypes.EQUIPPABLE), "Nonwearable Planetry item retained copied Nexo equipment component");
         check(contains(lore(nexo), "GLYPH[tag_rare]"), "Rarity did not use native Nexo resolver");
         setField("Nexo", "available", false);
         expectFailure(() -> create("nexo"), "Missing Nexo item silently became a vanilla fallback");
@@ -1506,6 +1836,41 @@ public final class ItemsProbe extends JavaPlugin {
     private Object definition(ItemStack item) { return call(items, "definition", item); }
     private int durability(ItemStack item) { return (Integer) call(items, "currentDurability", item); }
     private boolean damage(ItemStack item) { return (Boolean) call(items, "damage", player.player, item, EquipmentSlot.HAND); }
+    private void setDurability(ItemStack item, int remaining) {
+        item.editMeta(meta -> meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "durability"),
+                PersistentDataType.INTEGER, remaining));
+    }
+    private void nativeBar(ItemStack item, int maximum, int remaining) {
+        boolean reserved = item.getType() == Material.ELYTRA || item.getType() == Material.TRIDENT;
+        int nativeMax = Objects.requireNonNull(item.getData(DataComponentTypes.MAX_DAMAGE));
+        int nativeSpent = Objects.requireNonNull(item.getData(DataComponentTypes.DAMAGE));
+        check((reserved ? nativeMax >= maximum : nativeMax == maximum)
+                && (reserved ? Math.abs(nativeSpent / (double) nativeMax - (maximum - remaining) / (double) maximum) <= 2d / nativeMax
+                             : nativeSpent == maximum - remaining),
+                "Native durability components differ from counter: " + item.getType() + "/" + maximum + "/" + remaining
+                        + " actual=" + item.getData(DataComponentTypes.MAX_DAMAGE) + "/" + item.getData(DataComponentTypes.DAMAGE));
+        if (reserved) check(nativeMax - nativeSpent >= 2, "Native last-point reserve refused a usable custom item");
+        check(!item.getItemMeta().isUnbreakable() && item.getItemMeta().hasItemFlag(ItemFlag.HIDE_UNBREAKABLE),
+                "Breakable native durability bar retained an unbreakable component or visible label");
+        // Exercise the actual native bar implementation rather than inferring visibility from components.
+        // This is server item logic, not a connected-client rendering assertion.
+        try {
+            Object nativeStack = Class.forName("org.bukkit.craftbukkit.inventory.CraftItemStack")
+                    .getMethod("asNMSCopy", ItemStack.class).invoke(null, item);
+            boolean visible = (Boolean) nativeStack.getClass().getMethod("isBarVisible").invoke(nativeStack);
+            int width = (Integer) nativeStack.getClass().getMethod("getBarWidth").invoke(nativeStack);
+            int expectedWidth = Math.round(13f - (maximum - remaining) * 13f / maximum);
+            check(visible == (remaining < maximum) && width == expectedWidth,
+                    "Native durability bar visibility/width disagrees with counter: " + item.getType() + "/" + remaining
+                            + " visible=" + visible + " width=" + width + " expected=" + expectedWidth);
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("Cannot inspect pinned Paper native durability bar", error);
+        }
+    }
+    private static boolean durabilityLineRed(ItemStack item) {
+        return item.getItemMeta().lore().stream().filter(component -> plain(component).contains("Durability:"))
+                .anyMatch(ItemsProbe::red);
+    }
     @SuppressWarnings("unchecked") private Set<String> unmet(ItemStack item) { return (Set<String>) call(items, "unmet", player.player, definition(item)); }
     private static Object call(Object target, String name, Object... args) {
         try {
@@ -1543,6 +1908,11 @@ public final class ItemsProbe extends JavaPlugin {
     private void denied(Event event, String action) { fire(event); check(((Cancellable) event).isCancelled(), "Allowed " + action); }
     private Entity entity() { UUID id = UUID.randomUUID(); return proxy(Entity.class, (object, method, args) -> switch (method.getName()) {
         case "getUniqueId" -> id; case "getEntityId" -> id.hashCode(); case "getType" -> org.bukkit.entity.EntityType.ARMOR_STAND;
+        case "getWorld" -> Bukkit.getWorlds().getFirst(); case "getLocation" -> Bukkit.getWorlds().getFirst().getSpawnLocation();
+        case "hashCode" -> System.identityHashCode(object); case "equals" -> object == args[0]; default -> zero(method.getReturnType());
+    }); }
+    private FishHook fishHook() { UUID id = UUID.randomUUID(); return proxy(FishHook.class, (object, method, args) -> switch (method.getName()) {
+        case "getUniqueId" -> id; case "getEntityId" -> id.hashCode(); case "getShooter" -> player.player;
         case "getWorld" -> Bukkit.getWorlds().getFirst(); case "getLocation" -> Bukkit.getWorlds().getFirst().getSpawnLocation();
         case "hashCode" -> System.identityHashCode(object); case "equals" -> object == args[0]; default -> zero(method.getReturnType());
     }); }

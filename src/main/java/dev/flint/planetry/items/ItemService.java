@@ -126,6 +126,13 @@ public final class ItemService {
                 && (def.unbreakable() || def.maxDurability() == 0 || currentDurability(stack) > 0);
     }
 
+    /** Holding remains unrestricted; managed equipment belongs only in its configured worn slot. */
+    public boolean canEquip(ItemStack stack, EquipmentSlot slot) {
+        if (slot == EquipmentSlot.HAND || slot == EquipmentSlot.OFF_HAND || id(stack) == null) return true;
+        var def = definition(stack);
+        return def != null && slot.name().equals(def.equipSlot());
+    }
+
     public void refresh(ItemStack stack, Player viewer) {
         var def = definition(stack);
         if (def == null) return;
@@ -135,8 +142,9 @@ public final class ItemService {
         meta.lore(plugin.language().lore(def, currentDurability(stack), unmet, plugin.hooks().glyphs(viewer), viewer));
         // A deferred migration must not make an existing oversized stack invalid.
         if (stack.getAmount() <= def.maxStackSize()) meta.setMaxStackSize(def.maxStackSize());
-        // Custom durability is event-driven for every material. Suppress vanilla damage and tooltips.
-        meta.setUnbreakable(true);
+        // Native UNBREAKABLE also hides the durability bar. Breakable counters rely on
+        // the PlayerItemDamageEvent guard to suppress automatic native wear instead.
+        meta.setUnbreakable(def.unbreakable() || def.maxDurability() == 0);
         meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE);
         if (def.customModelData() != null) {
             var model = meta.getCustomModelDataComponent();
@@ -172,13 +180,27 @@ public final class ItemService {
         meta.getPersistentDataContainer().set(canPlace, PersistentDataType.BYTE, (byte) (def.canPlace() ? 1 : 0));
         meta.getPersistentDataContainer().set(soulbound, PersistentDataType.BYTE, (byte) (def.soulbound() ? 1 : 0));
         stack.setItemMeta(meta);
+        // ItemMeta's null equippable restores material defaults (including heads and armour).
+        // An explicit removal also suppresses those defaults and copied Nexo equipment.
+        if (def.equipSlot() == null || stack.getAmount() != 1) stack.unsetData(DataComponentTypes.EQUIPPABLE);
         // Minecraft forbids MAX_DAMAGE with stack size >1, including unbreakable items.
-        // Keep native single-item capacity for vanilla usability checks (tridents/elytra),
-        // while UNBREAKABLE and our event guard reserve all wear for the custom counter.
-        if (def.maxStackSize() > 1) {
+        // A deferred migration can still retain an old oversized stack and capacity.
+        if (stack.getMaxStackSize() > 1) {
             stack.unsetData(DataComponentTypes.MAX_DAMAGE);
             stack.unsetData(DataComponentTypes.DAMAGE);
+        } else if (!def.unbreakable() && def.maxDurability() > 0) {
+            // Elytra/tridents refuse their last native point before use. Scale their
+            // bar equally so the final custom point stays usable without changing its ratio.
+            boolean reservesLastPoint = stack.getType() == Material.ELYTRA || stack.getType() == Material.TRIDENT;
+            int maximum = reservesLastPoint ? (int) Math.min(Integer.MAX_VALUE, def.maxDurability() * 2L)
+                    : def.maxDurability();
+            int spent = (int) ((def.maxDurability() - currentDurability(stack)) * (long) maximum / def.maxDurability());
+            if (reservesLastPoint && currentDurability(stack) > 0) spent = Math.min(spent, maximum - 2);
+            // The client bar also reads these components on PAPER and other custom bases.
+            stack.setData(DataComponentTypes.MAX_DAMAGE, maximum);
+            stack.setData(DataComponentTypes.DAMAGE, spent);
         } else {
+            // Native capacity is still needed for gliding/charging, even without a custom counter.
             stack.resetData(DataComponentTypes.MAX_DAMAGE);
             stack.resetData(DataComponentTypes.DAMAGE);
         }
@@ -219,6 +241,10 @@ public final class ItemService {
             // Native equipment break packet produces normal client break particles/animation.
             player.broadcastSlotBreak(slot);
             player.playSound(player.getLocation(), Sound.ENTITY_ITEM_BREAK, 1, 1);
+            // The native control-stick wrapper converts an exhausted stack into a fishing
+            // rod and copies even an empty stack's patch. Retire its custom identity first.
+            if (stack.getType() == Material.CARROT_ON_A_STICK || stack.getType() == Material.WARPED_FUNGUS_ON_A_STICK)
+                stack.setItemMeta(null);
             stack.setAmount(0);
             return true;
         }

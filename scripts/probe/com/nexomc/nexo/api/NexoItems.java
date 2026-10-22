@@ -33,6 +33,8 @@ public final class NexoItems {
                 meta.getPersistentDataContainer().set(new NamespacedKey("nexo", "probe"), PersistentDataType.STRING, "builder-metadata");
             });
             stack.setData(DataComponentTypes.ITEM_MODEL, Key.key("nexo:probe_texture"));
+            stack.setData(DataComponentTypes.EQUIPPABLE, io.papermc.paper.datacomponent.item.Equippable
+                    .equippable(org.bukkit.inventory.EquipmentSlot.HEAD).build());
             stack.addUnsafeEnchantment(Enchantment.SHARPNESS, 10);
             return stack;
         }

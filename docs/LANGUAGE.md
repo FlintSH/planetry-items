@@ -63,7 +63,7 @@ Changing `rarities.*` only changes the rarity lore line.
 | `rarities.common`, `.uncommon`, `.rare`, `.epic`, `.legendary`, `.mythical` | Rarity lore | None |
 | `glyph-fallbacks.<glyph-id>` | Text when no working native glyph is supplied | No dynamic values |
 | `lore.soulbound` | Suffix on the type line for soulbound items, including separator | None |
-| `lore.durability`, `lore.durability-low` | Normal/final-10% durability | `{current}`, `{max}` |
+| `lore.durability`, `lore.durability-low` | Normal/final-30% durability (at least the final point) | `{current}`, `{max}` |
 | `messages.<key>` | Command/event text | See below |
 
 Minecraft attribute language keys replace `:` and `_` with `-`:

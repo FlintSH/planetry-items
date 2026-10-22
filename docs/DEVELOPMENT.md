@@ -47,6 +47,7 @@ server thread.
 | `plugin.items().create(id, viewer)` | Create one new item at full configured durability; may fail for an unavailable Nexo source; does not insert it into an inventory |
 | `plugin.items().unmet(player, definition)` | Ordered immutable set of unmet positive requirement keys |
 | `plugin.items().usable(player, stack)` | Check active identity, inventory readiness, requirements and remaining durability; unmanaged items return true |
+| `plugin.items().canEquip(stack, slot)` | Check configured worn-slot eligibility; unmanaged items and holding in either hand return true; check `usable` separately |
 | `plugin.items().refresh(stack, viewer)` | Update current lore/requirements/attributes and other refresh-owned fields in place; does not rebuild material/Nexo source or insert anything |
 | `plugin.items().migrate(stack, viewer)` | Return a rebuilt copy preserving instance data and absolute remaining durability; caller handles quantity/splitting and insertion |
 | `plugin.guard().migrate(player)` | Apply the carried-inventory scan and return updated/removed/failed stack counts; does not implement the manual command's cooldown |
