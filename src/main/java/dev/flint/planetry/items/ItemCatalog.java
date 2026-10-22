@@ -96,7 +96,18 @@ public final class ItemCatalog {
 
     private static void loadFile(Path file, Map<String, ItemDefinition> result, Map<String, String> origins,
                                  String label) throws IOException {
-        Map<String, Object> root = readYaml(file);
+        loadRoot(readYaml(file), result, origins, label);
+    }
+
+    /** Parse an authenticated proxy bundle without staging partially written YAML files. */
+    public static ItemCatalog parse(String yaml) {
+        var result = new LinkedHashMap<String, ItemDefinition>();
+        loadRoot(readYaml(new java.io.StringReader(yaml), "proxy items"), result, new LinkedHashMap<>(), "proxy items");
+        return new ItemCatalog(result);
+    }
+
+    private static void loadRoot(Map<String, Object> root, Map<String, ItemDefinition> result,
+                                 Map<String, String> origins, String label) {
         known(root, Set.of("schema-version", "items"), "catalog");
         if (root.containsKey("schema-version")) integer(root.get("schema-version"), "schema-version", 1, 1);
         Map<String, Object> rawItems = mapping(root.get("items"), "items");

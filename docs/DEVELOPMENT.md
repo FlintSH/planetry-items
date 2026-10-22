@@ -175,3 +175,30 @@ persistence, not a transaction with the network inventory database.
 If an older recovery queue is unreadable, a new cursor is saved independently
 under `planetryitems:soulbound_recovery_extra/<unique-id>`. Valid entries still
 recover while the unreadable entry remains unchanged for operator review.
+
+## Proxy definition snapshots
+
+The optional definitions-source: proxy mode uses SyncProtocol version2 over
+planetry:items_sync, shared byte-identically with PlanetryItems-Velocity. The
+backend requests a nonce-bound revision over one live player connection, with
+HMAC-SHA256 authentication, a ten-second deadline and 24,000-byte chunks within
+a 2,000,000-byte complete snapshot. No network filenames are extracted.
+
+ProxyDefinitions validates both documents through the production catalog, item
+and language validators. Its activation callback only swaps prepared references;
+forced atomic paired-cache persistence precedes that callback. Policy/session
+reconciliation runs on the next server tick. A missing first cache gates normal
+Inventory Sync readiness checks so no empty-catalog migration can delete items.
+Unknown managed IDs are preserved unavailable in proxy mode to tolerate transfers
+ahead of a catalog revision. Existing local mode and the networkItemIds and
+giveNetworkItem integration APIs remain available.
+
+Run python3 scripts/sync-smoke.py target/planetry-items-VERSION.jar after Maven
+creates target/test-classpath.txt. It starts two real disposable Paper processes
+for first-sync and cached-restart checks with controlled players and transport.
+Keep fixtures separate from released classes. See docs/ACCEPTANCE.md.
+
+Proxy snapshots carry a durable increasing generation. LONG PDC proxy_generation
+fences future items centrally before definition lookup, refresh, migration or
+damage can apply stale rules. Backend cache rejects rollback and same-generation
+content forks. Unknown/future equipment stays suspended in place with full storage.

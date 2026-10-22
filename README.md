@@ -2,7 +2,9 @@
 
 Configurable custom items for [Planetry](https://github.com/FlintSH/planetry).
 Runs on **Paper/Purpur 26.1.2 with Java 25**, on each gameplay backend.
-No database or proxy plugin is required. Spigot and Folia are not supported.
+No database is required. Local definitions work without a proxy plugin;
+[PlanetryItems-Velocity](https://github.com/FlintSH/planetry-items-velocity) can
+manage definitions and language centrally. Spigot and Folia are not supported.
 
 Download a JAR and `SHA256SUMS` from [Releases](https://github.com/FlintSH/planetry-items/releases).
 Main CI tests the packaged JAR on pinned Paper before publishing those exact bytes.
@@ -22,8 +24,10 @@ Releases remain prereleases while the full production plugin combination awaits 
 
 Staff edit YAML files with a text editor; there is no in-game creation GUI.
 **Keep existing IDs stable and catalogs identical on every backend sharing
-inventories.** Removing or renaming an ID removes existing stacks when player
-inventories update. Read the staff guide before editing a live catalog.
+inventories.** In local mode, removing or renaming an ID removes existing stacks
+when player inventories update. Proxy mode preserves unknown IDs as unavailable
+to protect items transferred ahead of their definition. Read the staff guide
+before editing a live catalog.
 
 ## Install and configure
 
@@ -43,6 +47,16 @@ Optional integrations:
 | [AuraSkills 2.4.0](https://github.com/Archy-X/AuraSkills/releases/tag/2.4.0) | Skill levels and equipment stat bonuses | Positive skill requirements deny use; AuraSkills bonuses are inactive |
 | [PlanetryCore](https://github.com/FlintSH/planetry-core) | Cached game level | Positive game-level requirements deny use until progress is loaded |
 | [NetworkInventorySync](https://github.com/FlintSH/network-inventory-sync) | Inventory readiness | If installed, disabled/incompatible/unready sessions cannot receive items or have their inventory refreshed |
+
+For central configuration, follow the
+[proxy migration guide](https://github.com/FlintSH/planetry-items-velocity#install-and-migrate).
+Set `definitions-source: proxy` and the matching private `proxy-sync.shared-secret`
+in this backend's config, then restart. Proxy mode ignores local `items/` and
+`lang.yml`; backend integration and refresh settings remain local. Source/key
+changes require restart. Without an accepted cache, managed item grants and
+inventory reconciliation wait for the first valid snapshot. Empty servers need
+a connected player to carry that update. Check `/piv status` on Velocity and
+wait for matching `current` revisions before using new definitions across servers.
 
 Nexo loads items asynchronously. A missing/loading item can be given again after
 Nexo finishes loading. PlanetryItems copies the source item's material and visual

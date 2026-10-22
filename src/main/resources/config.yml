@@ -4,3 +4,12 @@
 # Refresh viewer-specific requirements and active AuraSkills bonuses every second.
 # Inventory Sync readiness is checked before modifying a player's inventory.
 refresh-interval-ticks: 20
+
+# local: read this backend's items/ and lang.yml (existing behavior).
+# proxy: use authenticated definitions and language from PlanetryItems-Velocity.
+# Changing the source or shared secret requires a full backend restart.
+definitions-source: local
+proxy-sync:
+  # Copy the generated shared-secret from the proxy's config.properties.
+  # Use the same private value on participating backends; never post it in an issue.
+  shared-secret: ''

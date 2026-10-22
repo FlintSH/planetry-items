@@ -485,6 +485,12 @@ public final class ItemGuard implements Listener {
             if (items().id(original) == null) continue;
             ItemStack refreshed = original.clone();
             if (items().definition(refreshed) == null) {
+                if (plugin.proxyManagedDefinitions()) {
+                    // A newer item may arrive before this backend receives the proxy revision.
+                    suspendUnknown(refreshed);
+                    if (!refreshed.equals(original)) inv.setItem(i, refreshed);
+                    continue;
+                }
                 inv.setItem(i, null);
                 removed(p, original);
                 continue;
@@ -496,7 +502,12 @@ public final class ItemGuard implements Listener {
         }
         ItemStack cursor = p.getItemOnCursor();
         if (items().id(cursor) != null) {
-            if (items().definition(cursor) == null) { p.setItemOnCursor(null); removed(p, cursor); }
+            if (items().definition(cursor) == null) {
+                if (plugin.proxyManagedDefinitions()) {
+                    var suspended = cursor.clone(); suspendUnknown(suspended);
+                    if (!suspended.equals(cursor)) p.setItemOnCursor(suspended);
+                } else { p.setItemOnCursor(null); removed(p, cursor); }
+            }
             else {
                 ItemStack refreshed = cursor.clone(); items().refresh(refreshed, p);
                 if (!refreshed.equals(cursor)) p.setItemOnCursor(refreshed);
@@ -506,6 +517,9 @@ public final class ItemGuard implements Listener {
         for (var slot : SLOTS) {
             ItemStack stack = inv.getItem(slot);
             var def = items().definition(stack);
+            // The first pass suspended attributes. Retain unknown/newer worn items in place,
+            // including with full storage; unequipping here could drop a transferred possession.
+            if (plugin.proxyManagedDefinitions() && items().id(stack) != null && def == null) continue;
             boolean hand = slot == EquipmentSlot.HAND || slot == EquipmentSlot.OFF_HAND;
             if (items().id(stack) != null && (!items().usable(p, stack) || (!hand && !items().canEquip(stack, slot)))) {
                 if (!hand) {
@@ -543,6 +557,11 @@ public final class ItemGuard implements Listener {
             ItemStack original = inventory.getItem(slot);
             if (items().id(original) == null) continue;
             if (items().definition(original) == null) {
+                if (plugin.proxyManagedDefinitions()) {
+                    var suspended = original.clone(); suspendUnknown(suspended);
+                    if (!suspended.equals(original)) inventory.setItem(slot, suspended);
+                    failed++; continue;
+                }
                 inventory.setItem(slot, null); removed(player, original); removed++; continue;
             }
             try {
@@ -576,7 +595,13 @@ public final class ItemGuard implements Listener {
         }
         ItemStack cursor = player.getItemOnCursor();
         if (items().id(cursor) != null) {
-            if (items().definition(cursor) == null) { player.setItemOnCursor(null); removed(player, cursor); removed++; }
+            if (items().definition(cursor) == null) {
+                if (plugin.proxyManagedDefinitions()) {
+                    var suspended = cursor.clone(); suspendUnknown(suspended);
+                    if (!suspended.equals(cursor)) player.setItemOnCursor(suspended);
+                    failed++;
+                } else { player.setItemOnCursor(null); removed(player, cursor); removed++; }
+            }
             else try {
                 var replacement = items().migrate(cursor, player);
                 if (replacement.getAmount() > replacement.getMaxStackSize()) failed++;
@@ -592,6 +617,11 @@ public final class ItemGuard implements Listener {
         var meta = stack.getItemMeta();
         String name = meta.hasDisplayName() ? PlainTextComponentSerializer.plainText().serialize(meta.displayName()) : items().id(stack);
         plugin.message(player, "messages.removed-item", Map.of("item", name));
+    }
+
+    private void suspendUnknown(ItemStack stack) {
+        // Keep identity, contents, enchantments and instance data for a later valid migration.
+        stack.editMeta(meta -> meta.setAttributeModifiers(HashMultimap.create()));
     }
 
     private static boolean workstation(InventoryType type) {

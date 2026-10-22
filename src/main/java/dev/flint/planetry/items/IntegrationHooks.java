@@ -172,6 +172,8 @@ public final class IntegrationHooks implements AutoCloseable {
 
     /** Installed but disabled, incompatible or not-yet-ready Inventory Sync always refuses mutation. */
     public boolean inventoryReady(Player player) {
+        // A first proxy snapshot must arrive before unknown IDs can be reconciled or removed.
+        if (plugin instanceof PlanetryItems items && items.proxyDefinitionsPending()) return false;
         Plugin sync = plugin.getServer().getPluginManager().getPlugin("NetworkInventorySync");
         if (sync == null) return true;
         if (!sync.isEnabled()) return false;

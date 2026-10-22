@@ -1,5 +1,8 @@
 package dev.flint.planetry.items;
 
+import dev.flint.planetry.items.sync.ProxyDefinitions;
+import dev.flint.planetry.items.sync.SyncProtocol;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
@@ -21,16 +24,16 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     private ItemPolicy policy;
     private SoulboundRecovery recovery;
     private int refreshTicks;
+    private boolean configurationLoaded, proxyMode, definitionsChanged;
+    private String syncSecret = "";
+    private ProxyDefinitions proxyDefinitions;
     private static final long MIGRATE_COOLDOWN = 2 * 60 * 60 * 1000L;
 
     @Override public void onEnable() {
         hooks = new IntegrationHooks(this);
         items = new ItemService(this);
         try {
-            for (String file : List.of("config.yml", "lang.yml")) {
-                if (!getDataFolder().toPath().resolve(file).toFile().exists()) saveResource(file, false);
-            }
-            ItemFiles.initialize(getDataFolder().toPath(), getResource("items.yml"));
+            if (!getDataFolder().toPath().resolve("config.yml").toFile().exists()) saveResource("config.yml", false);
             loadDefinitions();
             policy = new ItemPolicy(this);
             recovery = new SoulboundRecovery(this);
@@ -41,10 +44,16 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
             getCommand("planetryitems").setTabCompleter(this);
             Objects.requireNonNull(getCommand("migrate")).setExecutor(this);
             getCommand("migrate").setTabCompleter(this);
+            if (proxyDefinitions != null) proxyDefinitions.start();
             // Fixed scheduler supports atomic interval reload without replacing running tasks.
             Bukkit.getScheduler().runTaskTimer(this, new Runnable() {
                 int elapsed;
                 @Override public void run() {
+                    if (definitionsChanged) {
+                        definitionsChanged = false;
+                        policy.clear();
+                        Bukkit.getOnlinePlayers().forEach(guard::beginSession);
+                    }
                     if (Bukkit.getCurrentTick() % 20 == 0)
                         for (Player player : Bukkit.getOnlinePlayers()) guard.flightTick(player);
                     if (++elapsed < refreshTicks) return;
@@ -55,7 +64,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
             Bukkit.getOnlinePlayers().forEach(guard::beginSession);
             getLogger().info("PlanetryItems enabled with " + catalog.definitions().size() + " item definitions.");
         } catch (Exception error) {
-            getLogger().severe("Cannot load PlanetryItems: " + error.getMessage());
+            getLogger().severe("Cannot load PlanetryItems: configuration rejected. Check config.yml and the selected definitions source.");
             Bukkit.getPluginManager().disablePlugin(this);
         }
     }
@@ -68,17 +77,57 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         Object rawTicks = configuration.get("refresh-interval-ticks", 20);
         if (!(rawTicks instanceof Integer ticks) || ticks < 1 || ticks > 1200)
             throw new IllegalArgumentException("refresh-interval-ticks must be an integer from 1 to 1200");
+        Object rawSource = configuration.get("definitions-source", "local");
+        if (!(rawSource instanceof String source) || !Set.of("local", "proxy").contains(source))
+            throw new IllegalArgumentException("definitions-source must be local or proxy");
+        boolean nextProxy = source.equals("proxy");
+        Object rawSecret = configuration.get("proxy-sync.shared-secret", "");
+        if (!(rawSecret instanceof String secret)) throw new IllegalArgumentException("proxy-sync.shared-secret must be text");
+        if (nextProxy) SyncProtocol.validateSecret(secret);
+        if (configurationLoaded && (nextProxy != proxyMode || !secret.equals(syncSecret)))
+            throw new IllegalArgumentException("Definitions source and shared secret changes require a full restart");
+        if (nextProxy) {
+            if (!configurationLoaded) {
+                // Never use local examples or stale local files as a network fallback.
+                catalog = ItemCatalog.parse("schema-version: 1\nitems: {}\n");
+                language = ItemLanguage.parse("schema-version: 1\n");
+                proxyMode = true;
+                syncSecret = secret;
+                proxyDefinitions = new ProxyDefinitions(this, secret, this::prepareProxySnapshot);
+                proxyDefinitions.initializeFromCache();
+            }
+            refreshTicks = ticks;
+            configurationLoaded = true;
+            proxyDefinitions.requestNow();
+            return;
+        }
+        if (!data.resolve("lang.yml").toFile().exists()) saveResource("lang.yml", false);
+        ItemFiles.initialize(data, getResource("items.yml"));
         ItemCatalog nextCatalog = ItemCatalog.load(data.resolve("items"));
-        items.validate(nextCatalog);
         ItemLanguage nextLanguage = ItemLanguage.load(data.resolve("lang.yml"));
+        validateDefinitions(nextCatalog, nextLanguage);
+        catalog = nextCatalog; language = nextLanguage; refreshTicks = ticks;
+        syncSecret = secret; configurationLoaded = true;
+    }
+
+    private void validateDefinitions(ItemCatalog nextCatalog, ItemLanguage nextLanguage) {
+        items.validate(nextCatalog);
         for (var definition : nextCatalog.definitions().values()) {
             nextLanguage.render(definition.displayName(), Map.of(), hooks.glyphs(null), null);
             nextLanguage.lore(definition, definition.maxDurability(), definition.requirements().keySet(), hooks.glyphs(null), null);
         }
-        catalog = nextCatalog; language = nextLanguage; refreshTicks = ticks;
+    }
+
+    private Runnable prepareProxySnapshot(SyncProtocol.Snapshot snapshot) throws Exception {
+        ItemCatalog nextCatalog = ItemCatalog.parse(new String(snapshot.items(), StandardCharsets.UTF_8));
+        ItemLanguage nextLanguage = ItemLanguage.parse(new String(snapshot.language(), StandardCharsets.UTF_8));
+        validateDefinitions(nextCatalog, nextLanguage);
+        // Persistence precedes this no-throw reference swap. Follow-up work runs next tick.
+        return () -> { catalog = nextCatalog; language = nextLanguage; definitionsChanged = true; };
     }
 
     @Override public void onDisable() {
+        if (proxyDefinitions != null) proxyDefinitions.close();
         if (recovery != null) Bukkit.getOnlinePlayers().forEach(recovery::captureCursor);
         if (hooks != null) hooks.close(); if (policy != null) policy.clear();
     }
@@ -89,6 +138,10 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     public ItemGuard guard() { return guard; }
     public ItemPolicy policy() { return policy; }
     public SoulboundRecovery recovery() { return recovery; }
+    public boolean proxyManagedDefinitions() { return proxyMode; }
+    public boolean proxyDefinitionsPending() { return proxyMode && (proxyDefinitions == null || !proxyDefinitions.ready()); }
+    public ProxyDefinitions proxyDefinitions() { return proxyDefinitions; }
+    public long proxyGeneration() { return proxyDefinitions == null ? 0L : proxyDefinitions.currentGeneration(); }
 
     /** Main-thread, immutable, sorted completion snapshot for optional network integrations. */
     public List<String> networkItemIds(String prefix) {
@@ -124,7 +177,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
                 Bukkit.getOnlinePlayers().forEach(guard::beginSession);
                 message(sender, "messages.reloaded", Map.of());
             } catch (Exception error) {
-                getLogger().warning("Reload rejected: " + error.getMessage());
+                getLogger().warning("Reload rejected. Check configuration; source and shared secret changes require a restart. Previous definitions retained.");
                 message(sender, "messages.reload-failed", Map.of("error", "Invalid configuration. See the server console."));
             }
             return true;

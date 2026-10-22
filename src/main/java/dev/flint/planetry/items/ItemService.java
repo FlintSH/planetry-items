@@ -19,7 +19,7 @@ import org.bukkit.persistence.PersistentDataType;
 /** Main-thread item API. Item identities and durability travel in persistent item data. */
 public final class ItemService {
     private final PlanetryItems plugin;
-    private final NamespacedKey identity, durability, oxygen, canPlace, soulbound;
+    private final NamespacedKey identity, durability, oxygen, canPlace, soulbound, proxyGeneration;
     private static final Set<DataComponentType> DEFINITION_COMPONENTS = Set.of(
             DataComponentTypes.CUSTOM_NAME, DataComponentTypes.LORE, DataComponentTypes.MAX_STACK_SIZE,
             DataComponentTypes.UNBREAKABLE, DataComponentTypes.ATTRIBUTE_MODIFIERS, DataComponentTypes.MAX_DAMAGE,
@@ -34,6 +34,7 @@ public final class ItemService {
         oxygen = new NamespacedKey(plugin, "oxygen");
         canPlace = new NamespacedKey(plugin, "can_place");
         soulbound = new NamespacedKey(plugin, "soulbound");
+        proxyGeneration = new NamespacedKey(plugin, "proxy_generation");
     }
 
     public void validate(ItemCatalog catalog) {
@@ -79,7 +80,14 @@ public final class ItemService {
 
     public ItemDefinition definition(ItemStack stack) {
         String id = id(stack);
-        return id == null ? null : plugin.catalog().get(id);
+        return id == null || awaitingProxyRevision(stack) ? null : plugin.catalog().get(id);
+    }
+
+    /** A stale backend must not apply older rules or clamp a newer item's saved durability. */
+    public boolean awaitingProxyRevision(ItemStack stack) {
+        return plugin.proxyManagedDefinitions() && id(stack) != null
+                && stack.getItemMeta().getPersistentDataContainer().getOrDefault(proxyGeneration,
+                        PersistentDataType.LONG, 0L) > plugin.proxyGeneration();
     }
 
     /** Current definitions take effect immediately, including on items not yet refreshed. */
@@ -179,6 +187,8 @@ public final class ItemService {
         else meta.getPersistentDataContainer().remove(oxygen);
         meta.getPersistentDataContainer().set(canPlace, PersistentDataType.BYTE, (byte) (def.canPlace() ? 1 : 0));
         meta.getPersistentDataContainer().set(soulbound, PersistentDataType.BYTE, (byte) (def.soulbound() ? 1 : 0));
+        if (plugin.proxyManagedDefinitions())
+            meta.getPersistentDataContainer().set(proxyGeneration, PersistentDataType.LONG, plugin.proxyGeneration());
         stack.setItemMeta(meta);
         // ItemMeta's null equippable restores material defaults (including heads and armour).
         // An explicit removal also suppresses those defaults and copied Nexo equipment.

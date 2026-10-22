@@ -232,3 +232,35 @@ of Inventory Sync's shared inventory profile; return to that backend to receive
 it. Keep its normal player-data backups. Do not edit or delete the
 `planetryitems:soulbound_recovery` player-data entry to resolve a pending item.
 Malformed recovery data is retained and logged for operator review.
+
+## Central definitions from Velocity
+
+[PlanetryItems-Velocity](https://github.com/FlintSH/planetry-items-velocity) owns
+items/ and lang.yml when this backend selects definitions-source: proxy. Copy
+the active backend items/ directory and customized language to the proxy, load
+them with /piv reload, then configure the same private proxy-sync.shared-secret
+and restart participating backends. Keep config.yml and optional integrations
+on each backend. Source/key changes require a full restart; /planetryitems
+reload in proxy mode reloads the local refresh interval and requests a proxy
+update without reading local definitions or language.
+
+Each update validates the complete pair, atomically caches proxy-cache.snapshot,
+then activates it. Invalid data, interrupted transfers, disk failures and a
+missing proxy retain the last accepted pair, including across restarts. With
+no accepted cache, item mutations and migration wait for the first snapshot;
+local examples are never substituted. A player connection carries updates, so
+empty/offline backends catch up on first connection. Check /piv status and wait
+for matching current revisions before relying on an edit across servers.
+
+Proxy mode preserves unknown managed IDs, including retired items, as unusable
+until their definitions are available. Native attribute bonuses are suspended
+while unknown; quantities, identity and instance data remain. This prevents a
+new item transferred to a lagging backend from being deleted. To roll back to
+local mode, stop the backend, restore its backed-up local items/ and lang.yml,
+select definitions-source: local and restart. No automatic file migration occurs.
+
+Items stamped with a newer proxy generation wait even if their ID exists in
+an older backend catalog. Their stored durability and instance data remain
+unchanged, and full-storage equipment stays suspended in place. Keep the proxy
+generation.dat and generation.initialized files in backups; do not reset them
+when restoring source YAML. Rollbacks receive a higher generation on reload.

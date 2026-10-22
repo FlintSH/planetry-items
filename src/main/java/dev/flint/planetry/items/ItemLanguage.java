@@ -45,7 +45,15 @@ public final class ItemLanguage {
     }
 
     public static ItemLanguage load(Path file) throws IOException {
-        Map<String, Object> root = ItemCatalog.readYaml(file);
+        return loadRoot(ItemCatalog.readYaml(file));
+    }
+
+    /** Language and definitions are validated together before a proxy revision activates. */
+    public static ItemLanguage parse(String yaml) throws IOException {
+        return loadRoot(ItemCatalog.readYaml(new java.io.StringReader(yaml), "proxy lang.yml"));
+    }
+
+    private static ItemLanguage loadRoot(Map<String, Object> root) throws IOException {
         var templates = new LinkedHashMap<String, String>();
         try (var stream = ItemLanguage.class.getResourceAsStream("/lang.yml")) {
             if (stream == null) throw new IOException("Missing bundled lang.yml");

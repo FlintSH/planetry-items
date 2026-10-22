@@ -187,3 +187,29 @@ commit SHA. No rebuild occurs in the release job.
 11. Test protected arrows in bows and crossbows, including a crossbow loaded
     before changing a definition to soulbound. Refused loading/firing must retain
     ammunition. A soulbound bow/crossbow with ordinary ammunition must still work.
+
+## Proxy-owned definitions and language
+
+Run `python3 scripts/sync-smoke.py target/planetry-items-VERSION.jar` with Java25
+and the Maven test classpath. Two real Paper26.1.2 processes check cold proxy
+mode without a cache and a restart with the accepted pair. Controlled players
+and a seeded pending request enter the registered production Messenger listener.
+The fixture covers multipart updates above32KiB, exact paired persistence and
+acknowledgements, bad MAC/carrier/nonce/deadline/replay rejection, invalid material
+and language rejection, no local fallback, no-cache inventory/cursor retention,
+unknown transferred-ID preservation and later metadata/durability migration.
+Unit tests cover nonce generation/polling, bounded parsing, authentication,
+assembly and atomic-cache failure paths.
+
+Also run both original smoke.py modes so existing gameplay, readiness and the
+issue19 network grant API remain covered. These fixtures are not connected-client
+transport tests. Stage actual proxy/Purpur, Nexo/AuraSkills/resource packs,
+first connection to an empty backend and real transfers between two backends.
+Check /piv status for matching current digests before exercising new items.
+
+Ordered-generation regressions also verify that future versions of an existing
+ID cannot be refreshed, migrated or damaged with stale definitions. Full-storage
+unknown/future equipment stays in place with bonuses suspended. A durable proxy
+generation ledger fences rollback and conflicting content at the same generation;
+source rollback is published as a fresh higher generation. Back up the proxy's
+generation.dat and generation.initialized with its configuration.
