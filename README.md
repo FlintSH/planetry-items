@@ -198,12 +198,15 @@ The legacy-style bonus alias `minecraft-armor: 3` under `bonuses` means
 `minecraft:armor: 3` under `attributes`; other `minecraft-*` attribute names work
 the same way. Do not configure the same normalized attribute twice.
 
-`planetry-canplace` (default `true`) and `planetry-soulbound` (default `false`)
+`canplace` (default `true`) and `soulbound` (default `false`)
 are boolean policy flags. Use unquoted `true` or `false` at the item root or
 under `bonuses`, once per flag; duplicates across both locations reject reload.
+Old `planetry-canplace` and `planetry-soulbound` remain compatible aliases;
+replace the old entry instead of adding a second spelling. Upgrade the JARs
+before using short names. See [upgrade steps](docs/CONFIGURATION.md#upgrade-existing-flags).
 They do not create numeric stats. Soulbound adds the configurable type-line
 indicator described [below](#lore-and-durability); canplace adds no lore.
-`planetry-canplace: false` silently blocks world placement from either hand,
+`canplace: false` silently blocks world placement from either hand,
 including blocks, entities, hanging items and buckets, without consuming the
 item or durability. Soulbound items also cannot be placed, dropped or written
 to external inventories; own storage, equipment, cursor and ender chest remain

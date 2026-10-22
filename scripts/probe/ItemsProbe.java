@@ -507,26 +507,26 @@ public final class ItemsProbe extends JavaPlugin {
                     material: STONE
                     max-durability: 0
                     max-stack-size: 64
-                    planetry-soulbound: true
+                    soulbound: true
                   policy_noplace:
                     material: STONE
                     max-durability: 5
-                    planetry-canplace: false
+                    canplace: false
                     requirements: {planetry-gamelevel: 999999}
                   policy_hat:
                     material: PAPER
                     type: COSMETIC
-                    planetry-soulbound: true
+                    soulbound: true
                     requirements: {planetry-gamelevel: 999999}
                   policy_arrow:
                     material: ARROW
                     max-durability: 0
                     max-stack-size: 64
-                    planetry-soulbound: true
+                    soulbound: true
                   policy_crossbow:
                     material: CROSSBOW
                     max-durability: 0
-                    planetry-soulbound: true
+                    soulbound: true
                 """;
         Files.writeString(file, definitions, StandardCharsets.UTF_8);
         var command = plugin.getCommand("planetryitems");
@@ -561,8 +561,22 @@ public final class ItemsProbe extends JavaPlugin {
         call(items, "refresh", migrated, player.player);
         call(items, "refresh", migrated, player.player);
         check(lore(migrated).equals(lore(serializedBound)), "Repeated refresh duplicated the soulbound suffix");
-        Files.writeString(file, definitions.replace("planetry-soulbound: true", "planetry-soulbound: false")
-                .replace("planetry-canplace: false", "planetry-canplace: true"), StandardCharsets.UTF_8);
+        // Existing catalogs must preserve protections through the spelling-only upgrade.
+        Object canonicalCatalog = call(plugin, "catalog");
+        Files.writeString(file, definitions.replace("soulbound:", "planetry-soulbound:")
+                .replace("canplace:", "planetry-canplace:"), StandardCharsets.UTF_8);
+        command.execute(player.player, "pitems", new String[]{"reload"});
+        check(call(plugin, "catalog") != canonicalCatalog, "Legacy flag catalog failed to activate on reload");
+        check((boolean) call(items, "soulbound", create("policy_bound"))
+                && !(boolean) call(items, "canPlace", create("policy_noplace")), "Legacy flag aliases lost protections");
+        Object legacyCatalog = call(plugin, "catalog");
+        Files.writeString(file, definitions.replace("    soulbound: true", "    soulbound: true\n    planetry-soulbound: false"),
+                StandardCharsets.UTF_8);
+        command.execute(player.player, "pitems", new String[]{"reload"});
+        check(call(plugin, "catalog") == legacyCatalog && (boolean) call(items, "soulbound", migrated)
+                && !(boolean) call(items, "canPlace", noPlace), "Conflicting aliases replaced the active catalog");
+        Files.writeString(file, definitions.replace("soulbound: true", "soulbound: false")
+                .replace("canplace: false", "canplace: true"), StandardCharsets.UTF_8);
         command.execute(player.player, "pitems", new String[]{"reload"});
         check(!(boolean) call(items, "soulbound", migrated) && (boolean) call(items, "canPlace", noPlace), "Reload did not override saved flags");
         call(items, "refresh", migrated, player.player);
@@ -582,6 +596,16 @@ public final class ItemsProbe extends JavaPlugin {
             call(items, "refresh", bound, player.player);
             check(lore(bound).getFirst().equals("Relic / Bound"), "Custom type/soulbound translations not applied");
             check(lore(create("policy_noplace")).getFirst().equals("Relic"), "Custom suffix appeared on an ordinary item");
+            Files.writeString(languageFile, "messages:\n  info: 'flags {canplace}/{soulbound}; legacy {planetry-canplace}/{planetry-soulbound}'\n",
+                    StandardCharsets.UTF_8);
+            command.execute(player.player, "pitems", new String[]{"reload"});
+            player.items[0] = bound.clone(); player.messages.clear();
+            command.execute(player.player, "pitems", new String[]{"info"});
+            check(player.messages.contains("flags true/true; legacy true/true")
+                    && player.messages.contains("canplace: true") && player.messages.contains("soulbound: true"),
+                    "Info omitted canonical flags or broke old header substitutions: " + player.messages);
+            check(player.messages.stream().noneMatch(message -> message.startsWith("planetry-canplace:")
+                    || message.startsWith("planetry-soulbound:")), "Info detail labels still use the retired prefix");
         } finally {
             Files.writeString(languageFile, originalLanguage, StandardCharsets.UTF_8);
             command.execute(player.player, "pitems", new String[]{"reload"});
@@ -822,7 +846,7 @@ public final class ItemsProbe extends JavaPlugin {
             String text = String.join("\n", player.messages);
             for (String field : List.of("name", "material", "configured-material", "lore", "model", "nexo",
                     "base64", "rarity", "type", "amount", "stack", "unbreakable", "equip", "usable",
-                    "bonuses", "requirements", "attributes", "durability"))
+                    "bonuses", "requirements", "attributes", "durability", "canplace: true", "soulbound: false"))
                 check(text.toLowerCase(Locale.ROOT).contains(field), "Info omits field " + field + " for " + id + ": " + text);
             check(text.contains(id), "Info does not identify the held item");
             if (id.equals("described")) check(text.contains("812") && text.contains("First probe line")

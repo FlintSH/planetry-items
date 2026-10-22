@@ -114,8 +114,8 @@ class ItemCatalogTest {
     @ParameterizedTest
     @ValueSource(strings = {"true", "false"})
     void acceptsBooleanPolicyFlagsAtRootOrUnderBonuses(String value) throws Exception {
-        for (boolean nested : List.of(false, true)) {
-            String flags = "planetry-canplace: " + value + "\nplanetry-soulbound: " + value + "\n";
+        for (String prefix : List.of("", "planetry-")) for (boolean nested : List.of(false, true)) {
+            String flags = prefix + "canplace: " + value + "\n" + prefix + "soulbound: " + value + "\n";
             String settings = nested ? "bonuses:\n" + flags.indent(2) : flags;
             var item = load("items:\n  rock:\n" + settings.indent(4)).get("rock");
             assertEquals(Boolean.parseBoolean(value), item.canPlace());
@@ -128,9 +128,9 @@ class ItemCatalogTest {
         var item = load("""
                 items:
                   rock:
-                    planetry-canplace: false
+                    canplace: false
                     bonuses:
-                      planetry-soulbound: true
+                      soulbound: true
                       planetry-oxygen: 8
                       minecraft-armor: 2
                 """).get("rock");
@@ -143,7 +143,7 @@ class ItemCatalogTest {
     @ParameterizedTest
     @ValueSource(strings = {"''", "'true'", "'false'", "'yes'", "0", "1", "1.0", "null", "~", "[]", "{}"})
     void rejectsNonBooleanPolicyFlagsInBothLocations(String value) {
-        for (String key : List.of("planetry-canplace", "planetry-soulbound")) {
+        for (String key : List.of("canplace", "soulbound", "planetry-canplace", "planetry-soulbound")) {
             for (boolean nested : List.of(false, true)) {
                 String flag = key + ": " + value + "\n";
                 String settings = nested ? "bonuses:\n" + flag.indent(2) : flag;
@@ -158,24 +158,47 @@ class ItemCatalogTest {
     @ParameterizedTest
     @ValueSource(strings = {"true", "false", "null", "''"})
     void rejectsPolicyFlagsRepeatedAcrossRootAndBonusesEvenWhenEqualOrBlank(String value) {
-        for (String key : List.of("planetry-canplace", "planetry-soulbound")) {
+        for (String key : List.of("canplace", "soulbound", "planetry-canplace", "planetry-soulbound")) {
             for (String other : List.of("true", "false", value)) {
                 var failure = assertThrows(IllegalArgumentException.class, () -> load("items:\n  rock:\n    "
                         + key + ": " + value + "\n    bonuses:\n      " + key + ": " + other + "\n"));
                 assertTrue(failure.getMessage().contains(key));
-                assertTrue(failure.getMessage().contains("also configured in bonuses"));
+                assertTrue(failure.getMessage().contains("duplicate policy flag"));
             }
         }
     }
 
     @Test void rejectsRepeatedPolicyFlagsWithinTheSameYamlMapping() {
-        for (String key : List.of("planetry-canplace", "planetry-soulbound")) {
+        for (String key : List.of("canplace", "soulbound", "planetry-canplace", "planetry-soulbound")) {
             for (boolean nested : List.of(false, true)) {
                 String flags = key + ": true\n" + key + ": false\n";
                 String settings = nested ? "bonuses:\n" + flags.indent(2) : flags;
                 assertThrows(IllegalArgumentException.class, () -> load("items:\n  rock:\n" + settings.indent(4)));
             }
         }
+    }
+
+    @Test void rejectsMixedOldAndNewFlagSpellingsAtEveryLocationEvenWhenEqualOrBlank() {
+        for (String key : List.of("canplace", "soulbound")) {
+            for (String value : List.of("true", "false", "null", "''")) {
+                for (String settings : List.of(
+                        key + ": " + value + "\nplanetry-" + key + ": " + value + "\n",
+                        "bonuses:\n  " + key + ": " + value + "\n  planetry-" + key + ": " + value + "\n",
+                        key + ": " + value + "\nbonuses:\n  planetry-" + key + ": " + value + "\n",
+                        "planetry-" + key + ": " + value + "\nbonuses:\n  " + key + ": " + value + "\n",
+                        key + ": true\nplanetry-" + key + ": false\n")) {
+                    var failure = assertThrows(IllegalArgumentException.class,
+                            () -> load("items:\n  rock:\n" + settings.indent(4)));
+                    assertTrue(failure.getMessage().contains("duplicate policy flag " + key));
+                }
+            }
+        }
+    }
+
+    @Test void oldAndNewFlagSpellingsProduceIdenticalDefinitions() throws Exception {
+        String settings = "items:\n  rock:\n    canplace: false\n    bonuses:\n      soulbound: true\n";
+        assertEquals(load(settings).get("rock"), load(settings.replace("canplace", "planetry-canplace")
+                .replace("soulbound", "planetry-soulbound")).get("rock"));
     }
 
     @Test void allExampleItemsLoad() throws Exception {

@@ -198,8 +198,11 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         values.put("amount", Integer.toString(stack.getAmount())); values.put("stack", Integer.toString(def.maxStackSize()));
         values.put("current", Integer.toString(items.currentDurability(stack))); values.put("max", Integer.toString(def.maxDurability()));
         values.put("unbreakable", Boolean.toString(def.unbreakable()));
-        values.put("planetry-canplace", Boolean.toString(def.canPlace()));
-        values.put("planetry-soulbound", Boolean.toString(def.soulbound()));
+        values.put("canplace", Boolean.toString(def.canPlace()));
+        values.put("soulbound", Boolean.toString(def.soulbound()));
+        // Keep existing custom info-header templates working after the YAML rename.
+        values.put("planetry-canplace", values.get("canplace"));
+        values.put("planetry-soulbound", values.get("soulbound"));
         values.put("attributes", attributes.isEmpty() ? "none" : String.join("; ", attributes));
         values.put("bonuses", def.bonuses().isEmpty() ? "none" : def.bonuses().toString());
         values.put("requirements", requirements.isEmpty() ? "none" : String.join(", ", requirements));
@@ -208,7 +211,7 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         message(player, "messages.info", values);
         // Detail output remains complete even when an administrator retains the old customizable header.
         for (String field : List.of("name", "material", "configured-material", "rarity", "type", "model", "nexo", "base64", "equip",
-                "amount", "stack", "unbreakable", "planetry-canplace", "planetry-soulbound", "attributes", "bonuses", "requirements", "lore", "usable"))
+                "amount", "stack", "unbreakable", "canplace", "soulbound", "attributes", "bonuses", "requirements", "lore", "usable"))
             player.sendMessage(net.kyori.adventure.text.Component.text(field + ": " + values.get(field)));
     }
 

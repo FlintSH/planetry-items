@@ -35,6 +35,11 @@ first-item walkthrough matches that catalog, and loads/renders the copied
 partial language override. It validates configuration and template behavior;
 the placeholder Nexo source still requires a real loaded ID, and these tests
 do not prove client rendering or grant every documented example in-game.
+The reference's policy/attribute/bonus/requirement snippets also load through
+the production parser. The complete attribute table is compared with all 35
+constants in the pinned Paper API, so omissions or spelling changes fail tests.
+Policy tests cover short and legacy names in both locations, invalid values,
+equivalent definitions and duplicate spellings even when their values agree.
 
 Real Paper probes validate actual ItemStack components and serialization, empty
 vanilla attributes, registry attributes, custom equipment, head texture properties,
@@ -62,6 +67,10 @@ with an independently saved new cursor.
 Soulbound label probes check the same-line suffix, exact purple label colour,
 ordinary/placement-only controls, serialization, old-item migration, repeated
 refresh, flag changes in both directions and custom type/suffix translations.
+Short-name probes exercise new items, serialization and existing-item migration;
+legacy-name reloads preserve protections. Mixed alias reloads retain the active
+catalog. Info probes check the short detail labels and both old/new template
+substitutions in an existing custom header.
 
 Before live installation, the operator should test on staging with the same
 Paper/Purpur version, actual Nexo1.22+/resource pack, AuraSkills2.4.0, PlanetryCore,
@@ -89,17 +98,17 @@ Inventory Sync and protection plugins used by the network:
    verify identity, oxygen and remaining durability survive. Ensure Nexo reloads
    do not replace Planetry metadata, and verify missing/loading integration data
    denies only the operations that depend on it.
-6. Check omitted policy flags behave as `planetry-canplace: true` and
-   `planetry-soulbound: false`. Test unquoted `true`/`false` at the item root and
+6. Check omitted policy flags behave as `canplace: true` and
+   `soulbound: false`. Test unquoted `true`/`false` at the item root and
    under `bonuses`; reject quoted strings, numbers, blank/null values and duplicate
    declarations across both locations without changing the active catalog. Check
    `/pitems info` shows both effective flags. Soulbound adds only its configured
    type-line suffix; canplace adds no lore, and neither creates numeric stats.
    Keep the six example IDs unchanged when copying the staff catalog.
-7. With `planetry-canplace: false`, test both hands for block placement, entity
+7. With `canplace: false`, test both hands for block placement, entity
    placement, hanging items and bucket contents. Every blocked placement must be
    silent and spend neither the item nor custom durability. Repeat with ordinary
-   items and `planetry-canplace: true` as positive placement controls.
+   items and `canplace: true` as positive placement controls.
 8. Test soulbound moves by left/right click, shift-click, number/offhand swaps,
    drag and double-click collection. Own storage/hotbar, equipment, cursor and
    own ender chest must work; chest/workstation/entity inventory writes, world

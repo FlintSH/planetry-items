@@ -33,10 +33,10 @@ Nonempty sections have one blank line between them. Durability follows rarity
 without an extra section gap. Flavour lore trims leading/trailing blank lines
 but retains interior blank lines. Met requirements disappear for the holder.
 Removing a requirement's text does not remove its gameplay restriction.
-`planetry-soulbound: true` appends ` • ѕᴏᴜʟʙᴏᴜɴᴅ` to the type line, with
+`soulbound: true` appends ` • ѕᴏᴜʟʙᴏᴜɴᴅ` to the type line, with
 a gray separator and the label in `#B589D6`. False or omitted flags add no
 suffix or separator. This also applies when the flag is under `bonuses`.
-`planetry-canplace` adds no automatic lore or stat line.
+`canplace` adds no automatic lore or stat line.
 
 The suffix uses `lore.soulbound`, whose default is
 `'<gray> • <#B589D6>ѕᴏᴜʟʙᴏᴜɴᴅ'`, including its leading space and separator.
@@ -119,12 +119,15 @@ listed message context; they are not global variables.
 
 The `info` header can use `{id}`, `{name}`, `{material}`, `{configured-material}`,
 `{rarity}`, `{type}`, `{model}`, `{nexo}`, `{base64}`, `{equip}`, `{amount}`,
-`{stack}`, `{current}`, `{max}`, `{unbreakable}`, `{planetry-canplace}`,
-`{planetry-soulbound}`, `{attributes}`, `{bonuses}`,
+`{stack}`, `{current}`, `{max}`, `{unbreakable}`, `{canplace}`,
+`{soulbound}`, `{attributes}`, `{bonuses}`,
 `{requirements}`, `{lore}`, `{usable}`. Effective material/model come from the
 held stack; most other fields describe its active definition. The command also
 prints fixed plain detail lines so an old customized header cannot hide settings.
 Those detail lines are not separate language templates.
+Existing header placeholders `{planetry-canplace}` and `{planetry-soulbound}`
+remain aliases for `{canplace}` and `{soulbound}`. New templates should use
+the shorter names.
 
 The bundled `messages.soulbound-drop-warning` is exactly:
 

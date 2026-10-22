@@ -59,7 +59,7 @@ Creation is not a grant or a requirement bypass: an item can be created for a
 player who cannot use it. Stage capacity before granting, preserve full stacks,
 and handle unavailable integrations explicitly.
 
-`planetry-canplace` and `planetry-soulbound` are boolean policies, separate
+`canplace` and `soulbound` are boolean policies, separate
 from numeric Minecraft attributes and bonuses. Integration inventory writes
 must respect those policies, including nested soulbound bundle/container
 contents. Own storage/equipment/cursor and the player's own ender chest remain

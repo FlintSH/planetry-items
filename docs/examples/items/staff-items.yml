@@ -77,9 +77,9 @@ items:
     unbreakable: true
     # Soulbound adds the type-line suffix; canplace adds no lore. Neither adds stats.
     # Use unquoted booleans, once per flag.
-    planetry-canplace: false
+    canplace: false
     bonuses:
-      planetry-soulbound: true
+      soulbound: true
     # Add base64 with a real texture property for a custom head.
     # Do not use a texture URL/full /give command or combine with nexo-id.
 

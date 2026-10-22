@@ -137,6 +137,15 @@ until a removal and recovery plan is agreed.
 
 ## Add levels, bonuses and equipment
 
+Use these complete lists when choosing an item's effects:
+
+- [Minecraft attributes](CONFIGURATION.md#available-minecraft-attributes): native combat,
+  health, movement, mining, reach and other modifiers, with their exact keys.
+- [Bonuses](CONFIGURATION.md#bonuses): oxygen metadata and the five supported
+  AuraSkills stat bonuses, with their meanings and a copyable example.
+- [Requirements](CONFIGURATION.md#requirements): all six supported game/skill
+  minimums and an example combining them.
+
 Positive `planetry-gamelevel` needs loaded PlanetryCore progress. Positive
 `auraskills-required-*` needs loaded AuraSkills levels. Operator status and
 the staff permission do not bypass requirements. Staff can give an item to
@@ -159,9 +168,9 @@ PlanetryItems does not consume it or implement an oxygen survival system.
 
 ## Keep an item with its player
 
-Set `planetry-canplace: false` to silently prevent world placement from either
+Set `canplace: false` to silently prevent world placement from either
 hand without spending the item or custom durability. Set
-`planetry-soulbound: true` to also block drops, world deposits and external
+`soulbound: true` to also block drops, world deposits and external
 inventory writes. The player can still move it around their own storage,
 equipment and cursor, and use their own ender chest. Safe retrieval from other
 inventories remains available. Ordinary food/tool use still works; soulbound
@@ -169,11 +178,14 @@ tridents cannot be thrown. On death, only soulbound items and carriers
 containing them are retained; ordinary items follow normal death rules.
 
 Both flags accept only unquoted YAML `true` or `false`. Defaults are
-`planetry-canplace: true` and `planetry-soulbound: false`. Put each at the item
+`canplace: true` and `soulbound: false`. Put each at the item
 root or under `bonuses`, once per flag; repeating a flag across both locations
 rejects reload. Neither creates numeric stats. Soulbound adds the configurable
 ` • ѕᴏᴜʟʙᴏᴜɴᴅ` type-line suffix; canplace adds no lore.
 The example `staff_keepsake` demonstrates both locations.
+Older catalogs may still use `planetry-canplace` and `planetry-soulbound`.
+Replace each old key with its short name; do not keep both entries. See
+[upgrade steps](CONFIGURATION.md#upgrade-existing-flags).
 Bundles/container items with nested soulbound contents receive the same
 protection. Read [the policy reference](CONFIGURATION.md#placement-and-soulbound-policies)
 before applying it to existing items.

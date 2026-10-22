@@ -31,8 +31,8 @@ public final class ItemCatalog {
     private static final Set<String> FIELDS = Set.of("material", "display-name", "lore",
             "custom-model-data", "nexo-id", "base64", "rarity", "type", "max-stack-size",
             "max-durability", "unbreakable", "equip-slot", "bonuses", "requirements", "attributes",
-            "planetry-canplace", "planetry-soulbound");
-    private static final Set<String> POLICY_FLAGS = Set.of("planetry-canplace", "planetry-soulbound");
+            "canplace", "soulbound", "planetry-canplace", "planetry-soulbound");
+    private static final Set<String> POLICY_FLAGS = Set.of("canplace", "soulbound", "planetry-canplace", "planetry-soulbound");
     private static final Set<String> RARITIES = Set.of("COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY", "MYTHICAL");
     private static final Set<String> TYPES = Set.of("ITEM", "TOOL", "WEAPON", "ARMOUR", "FOOD", "COSMETIC", "ADDON", "SPACESUIT");
     private static final Set<String> WEARABLES = Set.of("ARMOUR", "COSMETIC", "SPACESUIT");
@@ -186,8 +186,8 @@ public final class ItemCatalog {
             }
         }
         Map<String, Object> rawBonuses = optionalMapping(item, "bonuses", path);
-        boolean canPlace = policyFlag(item, rawBonuses, "planetry-canplace", true, path);
-        boolean soulbound = policyFlag(item, rawBonuses, "planetry-soulbound", false, path);
+        boolean canPlace = policyFlag(item, rawBonuses, "canplace", true, path);
+        boolean soulbound = policyFlag(item, rawBonuses, "soulbound", false, path);
         var bonuses = new LinkedHashMap<String, Double>();
         for (var entry : rawBonuses.entrySet()) {
             String key = entry.getKey();
@@ -220,12 +220,23 @@ public final class ItemCatalog {
 
     private static boolean policyFlag(Map<String, Object> item, Map<String, Object> bonuses,
                                       String key, boolean fallback, String path) {
-        if (item.containsKey(key) && bonuses.containsKey(key)) {
-            throw invalid(path + "." + key, "also configured in bonuses; use only one location");
+        String configuredPath = null;
+        Object value = null;
+        // Retain existing catalogs, but never choose one alias over another silently.
+        for (String spelling : List.of(key, "planetry-" + key)) {
+            for (boolean nested : List.of(false, true)) {
+                Map<String, Object> source = nested ? bonuses : item;
+                if (!source.containsKey(spelling)) continue;
+                String location = path + (nested ? ".bonuses." : ".") + spelling;
+                if (configuredPath != null) {
+                    throw invalid(location, "duplicate policy flag " + key + "; already configured at "
+                            + configuredPath + "; use only one spelling and location");
+                }
+                configuredPath = location;
+                value = source.get(spelling);
+            }
         }
-        if (item.containsKey(key)) return bool(item.get(key), path + "." + key);
-        if (bonuses.containsKey(key)) return bool(bonuses.get(key), path + ".bonuses." + key);
-        return fallback;
+        return configuredPath == null ? fallback : bool(value, configuredPath);
     }
 
     private static String attributeKey(String key, String path) {

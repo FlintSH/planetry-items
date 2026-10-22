@@ -63,7 +63,7 @@ overflow drops. It does not grant to offline players or across backends.
 
 `info` shows the ID/current durability, configured and effective material,
 model data, name, rarity, type, visual source, equipment slot, quantity,
-stack size, unbreakable flag, `planetry-canplace`, `planetry-soulbound`, attributes, bonuses, requirements, flavour lore
+stack size, unbreakable flag, `canplace`, `soulbound`, attributes, bonuses, requirements, flavour lore
 and current usability. It requires a recognized active definition.
 
 `/pitems soulboundbypass` uses the existing `planetry.admin.items` permission;
@@ -202,7 +202,7 @@ and permissions are covered in the [language guide](LANGUAGE.md#nexo-glyphs-and-
 | Migration incomplete | Free storage for split stacks, clear oversized cursor stacks, and check missing Nexo sources; retry |
 | Item disappeared after update/server switch | Compare IDs/catalogs on every backend; restore missing definitions to prevent further removals and review inventory backups |
 | Equipped item moved or dropped | Player lost requirements; check storage capacity and Core/AuraSkills availability; full storage leaves soulbound equipment worn without native attributes or AuraSkills bonuses until space opens |
-| Item will not place, with no message | Check `planetry-canplace` and `planetry-soulbound`; blocked placement spends no item or custom durability |
+| Item will not place, with no message | Check `canplace` and `soulbound`; blocked placement spends no item or custom durability |
 | Soulbound item will not enter a chest or drop | External writes and world deposits are blocked, including carriers with nested soulbound contents; own ender chest and safe retrieval remain available |
 | Staff drop override does not work | Use a player with `planetry.admin.items`, enable `/pitems soulboundbypass`, then repeat an identical item/amount drop within two seconds; reconnects, reload and death reset it |
 | Crafting/repair result blocked | Managed items cannot be used in supported crafting/workstation result paths; there is no custom repair command |
