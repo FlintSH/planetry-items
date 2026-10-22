@@ -30,7 +30,9 @@ import java.util.Set;
 public final class ItemCatalog {
     private static final Set<String> FIELDS = Set.of("material", "display-name", "lore",
             "custom-model-data", "nexo-id", "base64", "rarity", "type", "max-stack-size",
-            "max-durability", "unbreakable", "equip-slot", "bonuses", "requirements", "attributes");
+            "max-durability", "unbreakable", "equip-slot", "bonuses", "requirements", "attributes",
+            "planetry-canplace", "planetry-soulbound");
+    private static final Set<String> POLICY_FLAGS = Set.of("planetry-canplace", "planetry-soulbound");
     private static final Set<String> RARITIES = Set.of("COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY", "MYTHICAL");
     private static final Set<String> TYPES = Set.of("ITEM", "TOOL", "WEAPON", "ARMOUR", "FOOD", "COSMETIC", "ADDON", "SPACESUIT");
     private static final Set<String> WEARABLES = Set.of("ARMOUR", "COSMETIC", "SPACESUIT");
@@ -183,9 +185,13 @@ public final class ItemCatalog {
                 throw invalid(path + ".attributes." + key, "duplicate normalized attribute");
             }
         }
+        Map<String, Object> rawBonuses = optionalMapping(item, "bonuses", path);
+        boolean canPlace = policyFlag(item, rawBonuses, "planetry-canplace", true, path);
+        boolean soulbound = policyFlag(item, rawBonuses, "planetry-soulbound", false, path);
         var bonuses = new LinkedHashMap<String, Double>();
-        for (var entry : optionalMapping(item, "bonuses", path).entrySet()) {
+        for (var entry : rawBonuses.entrySet()) {
             String key = entry.getKey();
+            if (POLICY_FLAGS.contains(key)) continue;
             if (!key.startsWith("minecraft-") && !BONUS_KEYS.contains(key)) throw invalid(path + ".bonuses." + key, "unknown bonus");
             if (blank(entry.getValue())) continue;
             if (key.startsWith("minecraft-")) {
@@ -208,7 +214,18 @@ public final class ItemCatalog {
         }
         String displayName = string(item.getOrDefault("display-name", id), path + ".display-name");
         return new ItemDefinition(id, material, displayName, lore(item.get("lore"), path + ".lore"), model,
-                nexoId, base64, rarity, type, maxStack, durability, unbreakable, equipSlot, bonuses, requirements, attributes);
+                nexoId, base64, rarity, type, maxStack, durability, unbreakable, equipSlot, bonuses, requirements, attributes,
+                canPlace, soulbound);
+    }
+
+    private static boolean policyFlag(Map<String, Object> item, Map<String, Object> bonuses,
+                                      String key, boolean fallback, String path) {
+        if (item.containsKey(key) && bonuses.containsKey(key)) {
+            throw invalid(path + "." + key, "also configured in bonuses; use only one location");
+        }
+        if (item.containsKey(key)) return bool(item.get(key), path + "." + key);
+        if (bonuses.containsKey(key)) return bool(bonuses.get(key), path + ".bonuses." + key);
+        return fallback;
     }
 
     private static String attributeKey(String key, String path) {

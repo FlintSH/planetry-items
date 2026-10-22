@@ -58,6 +58,7 @@ public final class ItemGuard implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void interact(PlayerInteractEvent e) {
+        if (plugin.policy().placementInteraction(e)) return;
         if (deny(e.getPlayer(), e.getItem())) { e.setCancelled(true); return; }
         if (e.getItem() != null && items().definition(e.getItem()) != null) items().refresh(e.getItem(), e.getPlayer());
     }
@@ -124,6 +125,7 @@ public final class ItemGuard implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void launch(PlayerLaunchProjectileEvent e) {
+        if (e.getProjectile() instanceof Trident && plugin.policy().soulbound(e.getItemStack())) { e.setCancelled(true); return; }
         // Recheck at release, since requirements can change while a trident is being charged.
         if (deny(e.getPlayer(), e.getItemStack())) e.setCancelled(true);
     }
@@ -187,7 +189,8 @@ public final class ItemGuard implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void shoot(EntityShootBowEvent e) {
-        if (e.getEntity() instanceof Player p && (deny(p, e.getBow()) || deny(p, e.getConsumable()))) e.setCancelled(true);
+        if (e.getEntity() instanceof Player p && (plugin.policy().soulbound(e.getConsumable())
+                || deny(p, e.getBow()) || deny(p, e.getConsumable()))) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -197,7 +200,7 @@ public final class ItemGuard implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void entityInteract(PlayerInteractEntityEvent e) {
-        if (deny(e.getPlayer(), e.getPlayer().getInventory().getItem(e.getHand()))) e.setCancelled(true);
+        if (plugin.policy().entityDeposit(e) || deny(e.getPlayer(), e.getPlayer().getInventory().getItem(e.getHand()))) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -217,7 +220,9 @@ public final class ItemGuard implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void place(BlockPlaceEvent e) { if (deny(e.getPlayer(), e.getItemInHand())) e.setCancelled(true); }
+    public void place(BlockPlaceEvent e) {
+        if (plugin.policy().placementBlocked(e.getItemInHand()) || deny(e.getPlayer(), e.getItemInHand())) e.setCancelled(true);
+    }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void damageItem(PlayerItemDamageEvent e) {
@@ -410,6 +415,7 @@ public final class ItemGuard implements Listener {
         Session session = sessions.get(p.getUniqueId());
         if (session != null && session.player() != p) return;
         if (!plugin.hooks().inventoryReady(p)) { plugin.hooks().clearBonuses(p); return; }
+        plugin.recovery().recover(p);
         if (pendingMigration.contains(p.getUniqueId())
                 && System.currentTimeMillis() >= nextMigration.getOrDefault(p.getUniqueId(), 0L)) {
             boolean firstAttempt = !nextMigration.containsKey(p.getUniqueId());
@@ -451,6 +457,9 @@ public final class ItemGuard implements Listener {
             boolean hand = slot == EquipmentSlot.HAND || slot == EquipmentSlot.OFF_HAND;
             if (items().id(stack) != null && !items().usable(p, stack)) {
                 if (!hand) {
+                    // Retain unusable soulbound equipment when storage is full. Refresh has
+                    // already removed native bonuses; this branch also excludes AuraSkills bonuses.
+                    if (plugin.policy().soulbound(stack) && inv.firstEmpty() < 0) continue;
                     inv.setItem(slot, null);
                     for (var leftover : inv.addItem(stack).values()) p.getWorld().dropItemNaturally(p.getLocation(), leftover);
                     deny(p, stack);

@@ -48,8 +48,10 @@ an item using the defaults below. Names in this table are literal YAML keys.
 | `max-stack-size` | `1` | Whole number 1–99; wearables and breakable items must use 1 |
 | `max-durability` | `100` | Whole number 0–2147483647; 0 disables the custom use counter |
 | `unbreakable` | `false` | Boolean `true` or `false`; true never spends durability and hides the counter |
+| `planetry-canplace` | `true` | Boolean policy flag; false silently prevents world placement |
+| `planetry-soulbound` | `false` | Boolean policy flag; true keeps the item in the player's inventory or own ender chest and retains it on death |
 | `attributes` | Empty | Minecraft attribute map; numeric or structured modifiers |
-| `bonuses` | Empty | AuraSkills bonuses, oxygen metadata, or legacy Minecraft attribute aliases |
+| `bonuses` | Empty | AuraSkills bonuses, oxygen metadata, legacy Minecraft attribute aliases, or either policy flag |
 | `requirements` | Empty | Minimum Core/AuraSkills levels |
 
 Numbers must be YAML numbers, not quoted strings. NaN and infinity are invalid.
@@ -58,11 +60,55 @@ rarity, equipment slot, attribute operation and slot-group values accept
 case-insensitive names; use the uppercase examples for consistency.
 
 Missing/null `attributes`, `bonuses` and `requirements` sections add nothing.
-Within those maps, missing/null/blank values omit an entry. Unknown bonus or
+Within those maps, missing/null/blank numeric values omit an entry. Present
+policy flags must be booleans, including when placed under `bonuses`. Unknown bonus or
 requirement keys still reject the file even when blank. A numeric `0` is an
 explicit value; a zero requirement imposes no restriction. Other fields have
 their own validation: a blank display name is invalid. Blank/null `nexo-id`
 and `base64` disable those sources; null `custom-model-data` leaves it unset.
+
+## Placement and soulbound policies
+
+Use unquoted YAML `true` or `false` for `planetry-canplace` and
+`planetry-soulbound`. Quoted strings, numbers, blank/null values and other
+values are invalid. Each flag may appear at the item's root or under
+`bonuses`, once per item. Defining the same flag in both places rejects the
+whole reload, even when the values agree. These are policy flags; do not put
+them under Minecraft `attributes`. They add no automatic lore or stat lines.
+
+For example, these settings belong inside an existing item definition:
+
+```yaml
+planetry-canplace: false
+bonuses:
+  planetry-soulbound: true
+```
+
+`planetry-canplace: false` silently prevents placing the item into the world
+from either hand, including blocks, entity placements, hanging items and bucket
+contents. A blocked attempt consumes neither the item nor custom durability.
+Omitting the flag defaults to `true`; it does not override soulbound protection.
+
+`planetry-soulbound: true` prevents external inventory writes, explicit drops,
+world deposits and placement, even when `planetry-canplace` is true. Players
+can move it within their own storage/hotbar, equipment and cursor, and into or
+out of their own ender chest. Chests, workstations and other entities cannot
+receive it. Ordinary retrieval from an external inventory remains allowed
+when the move does not send a soulbound item back. Safe moves of ordinary
+items also remain available while carrying soulbound items.
+
+Bundles and container items containing soulbound items receive the same
+protection, including nested contents; wrapping an item cannot permit an
+external transfer, drop or placement. With normal death drops enabled, only
+soulbound items and their protected carriers are retained; ordinary items
+follow normal death rules. Soulbound protection does not grant extra uses:
+ordinary food consumption and tool use remain valid, subject to requirements
+and durability. Throwing a soulbound trident is blocked to avoid losing it.
+
+Staff may enable the limited, confirmed drop override described in
+[commands and permissions](OPERATIONS.md#commands-and-permissions). It does
+not permit external storage, placement or death drops, and never bypasses
+requirements.
 
 ## Rarities and types
 
@@ -139,6 +185,7 @@ modifiers.
 | `auraskills-additional-toughness` | Add AuraSkills Toughness |
 | `auraskills-additional-strength` | Add AuraSkills Strength |
 | `minecraft-<attribute>` | Legacy numeric Minecraft attribute alias described above |
+| `planetry-canplace`, `planetry-soulbound` | Boolean policy flags described above; each may instead be at the item root |
 
 AuraSkills values are finite numbers and may be negative. They add once per
 active usable item, not once per piece in a stack. Nonwearables are active in
@@ -167,7 +214,9 @@ Unmet requirements appear in the holder's lore and plain denial message.
 Met requirement lines disappear. Players may carry/hold restricted items, but
 cannot activate them or gain their attributes/bonuses. Actions and armour
 equipment are checked, including shift-click, number keys, drag and dispensers.
-Unusable worn items move to storage or drop beside the player if full.
+Unusable worn items move to storage or drop beside the player if full, except
+soulbound equipment: when storage is full it stays worn without native
+attributes or AuraSkills bonuses until space becomes available.
 
 ## Models and textures
 
@@ -209,8 +258,9 @@ instead of spending twice on the initial click. Bow ammunition remains separate.
 Food/potions with positive durability return the item with one fewer use;
 zero durability uses normal single-use consumption; unbreakable is reusable.
 Reusable thrown consumables use their custom counter instead of consuming the
-source stack. Tridents transfer the remaining counter to the thrown item;
-a break at launch cannot carry the destroyed item.
+source stack. Non-soulbound tridents transfer the remaining counter to the
+thrown item; a break at launch cannot carry the destroyed item. Soulbound
+tridents cannot be thrown.
 
 The final 10%, with at least the final point, uses the low-durability template.
 At exhaustion the item disappears with normal break animation/particles and
@@ -234,3 +284,10 @@ inventory reconciliation, holder-specific lore and active AuraSkills bonuses.
 It reloads with `/pitems reload`. Readiness is checked before inventory changes.
 Gliding durability has its own once-per-second check. Full automatic migration
 failures use a five-second retry delay.
+
+Soulbound arrows cannot be fired or loaded into crossbows because another player
+could pick them up. Crossbows already containing protected ammunition cannot
+fire or be transferred externally; their stored ammunition stays intact. A
+soulbound bow/crossbow with ordinary ammunition remains usable. Protected bundles
+cannot unload contents through right-click use; move contents within your own
+inventory instead.

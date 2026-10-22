@@ -59,6 +59,14 @@ Creation is not a grant or a requirement bypass: an item can be created for a
 player who cannot use it. Stage capacity before granting, preserve full stacks,
 and handle unavailable integrations explicitly.
 
+`planetry-canplace` and `planetry-soulbound` are boolean policies, separate
+from numeric Minecraft attributes and bonuses. Integration inventory writes
+must respect those policies, including nested soulbound bundle/container
+contents. Own storage/equipment/cursor and the player's own ender chest remain
+valid destinations; external writes and world deposits are blocked. The staff
+drop confirmation is limited to one explicit drop and never authorizes other
+transfers or bypasses requirements. See the [policy reference](CONFIGURATION.md#placement-and-soulbound-policies).
+
 Do not retain catalog/definition references as live mutable configuration:
 reload replaces immutable snapshots. Do not mutate player inventory off-thread,
 call migrations while unready, or add persistent AuraSkills modifiers under
@@ -71,6 +79,8 @@ PlanetryItems' names.
 | Item `planetryitems:item_id` | `STRING` | Stable configured identity |
 | Item `planetryitems:durability` | `INTEGER` | Absolute remaining use counter |
 | Item `planetryitems:oxygen` | `DOUBLE` | Configured oxygen metadata, absent when not configured |
+| Item `planetryitems:can_place` | `BYTE` | Saved placement policy, 1 for true or 0 for false; default true |
+| Item `planetryitems:soulbound` | `BYTE` | Saved soulbound policy, 1 for true or 0 for false; default false |
 | Player `planetryitems:last_migrate` | `LONG` | Last completely successful manual migration time in epoch milliseconds, per backend |
 
 Normal Paper serialization and Inventory Sync preserve item PDC. There is no
@@ -78,6 +88,8 @@ separate PlanetryItems database. Future plugins may read oxygen, but this
 release does not consume it. Prefer the service methods for item changes so
 metadata, lore and native components stay consistent. Do not treat a raw ID
 alone as proof that its definition remains valid or the item is usable.
+The active definition controls policy for recognized items; saved policy flags
+travel with serialized stacks. They do not add automatic lore.
 
 ## Releases and contributions
 
@@ -91,3 +103,16 @@ Read `AGENTS.md` and Planetry's live coordination instructions before issue
 work. Feature requests belong in GitHub issues; automated development accepts
 only the account authorized by the central immutable numeric identity policy.
 Publishing a release does not authorize production installation.
+
+Protected cursors use player `BYTE_ARRAY` PDC at
+`planetryitems:soulbound_recovery`, holding Paper's serialized item collection.
+Capture runs before close/death/disconnect cleanup; recovery stages fitting stacks and preserves the exact remainder.
+It commits only when the living session is inventory-ready.
+It never drops leftovers. The normal backend player-data save persists this
+queue across restarts; it is outside Inventory Sync's shared snapshot. Other
+plugins must not replace or strip this entry. This uses ordinary player-data
+persistence, not a transaction with the network inventory database.
+
+If an older recovery queue is unreadable, a new cursor is saved independently
+under `planetryitems:soulbound_recovery_extra/<unique-id>`. Valid entries still
+recover while the unreadable entry remains unchanged for operator review.

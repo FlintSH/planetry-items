@@ -9,11 +9,11 @@ commands:
   planetryitems:
     aliases: [pitems]
     description: Manage Planetry custom items
-    usage: /<command> <list|give|reload|info>
+    usage: /<command> <list|give|reload|info|soulboundbypass>
   migrate:
     description: Update your Planetry items (two-hour cooldown)
     usage: /<command>
 permissions:
   planetry.admin.items:
-    description: List, give, inspect and reload custom items
+    description: List, give, inspect and reload custom items, and toggle Soulbound drop bypass
     default: op

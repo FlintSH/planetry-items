@@ -33,6 +33,9 @@ Nonempty sections have one blank line between them. Durability follows rarity
 without an extra section gap. Flavour lore trims leading/trailing blank lines
 but retains interior blank lines. Met requirements disappear for the holder.
 Removing a requirement's text does not remove its gameplay restriction.
+`planetry-canplace` and `planetry-soulbound` add no automatic lore or stat
+lines, including when configured under `bonuses`. Add explanatory flavour
+lore yourself if players should see those policies.
 
 Rarity sets the complete display-name color: COMMON gray, UNCOMMON green,
 RARE aqua, EPIC `#9554EA`, LEGENDARY `#FFBF00`, MYTHICAL red. Color tags in
@@ -100,14 +103,26 @@ listed message context; they are not global variables.
 | `migrate-success`, `migrate-partial` | `{updated}`, `{removed}`, `{failed}`; counts of stacks, not pieces |
 | `migrate-cooldown` | `{remaining}`; rounded-up hours/minutes |
 | `removed-item` | `{item}`; saved display name, or ID when unnamed |
+| `soulbound-bypass-enabled` | None; staff player's drop override is now on |
+| `soulbound-bypass-disabled` | None; staff player's drop override is now off |
+| `soulbound-drop-warning` | None; first explicit drop while the override is enabled; repeat the identical item/amount within two seconds to confirm once |
 
 The `info` header can use `{id}`, `{name}`, `{material}`, `{configured-material}`,
 `{rarity}`, `{type}`, `{model}`, `{nexo}`, `{base64}`, `{equip}`, `{amount}`,
-`{stack}`, `{current}`, `{max}`, `{unbreakable}`, `{attributes}`, `{bonuses}`,
+`{stack}`, `{current}`, `{max}`, `{unbreakable}`, `{planetry-canplace}`,
+`{planetry-soulbound}`, `{attributes}`, `{bonuses}`,
 `{requirements}`, `{lore}`, `{usable}`. Effective material/model come from the
 held stack; most other fields describe its active definition. The command also
 prints fixed plain detail lines so an old customized header cannot hide settings.
 Those detail lines are not separate language templates.
+
+The bundled `messages.soulbound-drop-warning` is exactly:
+
+> This item is Soulbound, are you sure you want to drop it? Toggle this bypass with /planetryitems soulboundbypass
+
+Existing customized `messages.usage` text should include `soulboundbypass`.
+Translating these messages does not change the confirmation window or grant
+external storage, placement, death-drop or requirements bypasses.
 
 Dynamic values are inserted as literal components. A player's name or an item
 value containing MiniMessage or glyph tags cannot execute them. A token with

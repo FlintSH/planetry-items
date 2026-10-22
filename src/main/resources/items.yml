@@ -1,6 +1,9 @@
 # PlanetryItems item catalog. All settings are optional except the item ID.
 # IDs use lowercase letters, numbers, _ and -. /planetryitems give <player> <id> [amount]
 # Configuration is validated completely before a reload replaces the active catalog.
+# Optional boolean policy flags: planetry-canplace defaults to true and
+# planetry-soulbound defaults to false. They also work under bonuses, but each
+# flag must appear in only one location. They do not add automatic lore lines.
 schema-version: 1
 items:
   lunar_crystal:
@@ -15,6 +18,8 @@ items:
     max-stack-size: 64
     # 0 disables durability. Breakable items must have max-stack-size: 1.
     max-durability: 0
+    planetry-canplace: true
+    planetry-soulbound: false
     # Missing, blank and empty bonus/requirement sections add nothing.
     bonuses: {}
     requirements: {}

@@ -19,7 +19,7 @@ import org.bukkit.persistence.PersistentDataType;
 /** Main-thread item API. Item identities and durability travel in persistent item data. */
 public final class ItemService {
     private final PlanetryItems plugin;
-    private final NamespacedKey identity, durability, oxygen;
+    private final NamespacedKey identity, durability, oxygen, canPlace, soulbound;
     private static final Set<DataComponentType> DEFINITION_COMPONENTS = Set.of(
             DataComponentTypes.CUSTOM_NAME, DataComponentTypes.LORE, DataComponentTypes.MAX_STACK_SIZE,
             DataComponentTypes.UNBREAKABLE, DataComponentTypes.ATTRIBUTE_MODIFIERS, DataComponentTypes.MAX_DAMAGE,
@@ -32,6 +32,8 @@ public final class ItemService {
         identity = new NamespacedKey(plugin, "item_id");
         durability = new NamespacedKey(plugin, "durability");
         oxygen = new NamespacedKey(plugin, "oxygen");
+        canPlace = new NamespacedKey(plugin, "can_place");
+        soulbound = new NamespacedKey(plugin, "soulbound");
     }
 
     public void validate(ItemCatalog catalog) {
@@ -78,6 +80,24 @@ public final class ItemService {
     public ItemDefinition definition(ItemStack stack) {
         String id = id(stack);
         return id == null ? null : plugin.catalog().get(id);
+    }
+
+    /** Current definitions take effect immediately, including on items not yet refreshed. */
+    public boolean canPlace(ItemStack stack) {
+        var def = definition(stack);
+        return def == null ? savedFlag(stack, canPlace, true) : def.canPlace();
+    }
+
+    /** Removed IDs retain their last saved policy until normal unavailable-item removal. */
+    public boolean soulbound(ItemStack stack) {
+        var def = definition(stack);
+        return def == null ? savedFlag(stack, soulbound, false) : def.soulbound();
+    }
+
+    private boolean savedFlag(ItemStack stack, NamespacedKey key, boolean fallback) {
+        if (id(stack) == null) return fallback;
+        return stack.getItemMeta().getPersistentDataContainer().getOrDefault(key,
+                PersistentDataType.BYTE, (byte) (fallback ? 1 : 0)) != 0;
     }
 
     public int currentDurability(ItemStack stack) {
@@ -149,6 +169,8 @@ public final class ItemService {
         if (def.bonuses().containsKey("planetry-oxygen"))
             meta.getPersistentDataContainer().set(oxygen, PersistentDataType.DOUBLE, def.bonuses().get("planetry-oxygen"));
         else meta.getPersistentDataContainer().remove(oxygen);
+        meta.getPersistentDataContainer().set(canPlace, PersistentDataType.BYTE, (byte) (def.canPlace() ? 1 : 0));
+        meta.getPersistentDataContainer().set(soulbound, PersistentDataType.BYTE, (byte) (def.soulbound() ? 1 : 0));
         stack.setItemMeta(meta);
         // Minecraft forbids MAX_DAMAGE with stack size >1, including unbreakable items.
         // Keep native single-item capacity for vanilla usability checks (tridents/elytra),
@@ -176,6 +198,8 @@ public final class ItemService {
         replacement.editPersistentDataContainer(data -> {
             data.set(identity, PersistentDataType.STRING, def.id());
             data.set(durability, PersistentDataType.INTEGER, remaining);
+            data.set(canPlace, PersistentDataType.BYTE, (byte) (def.canPlace() ? 1 : 0));
+            data.set(soulbound, PersistentDataType.BYTE, (byte) (def.soulbound() ? 1 : 0));
             if (def.bonuses().containsKey("planetry-oxygen"))
                 data.set(oxygen, PersistentDataType.DOUBLE, def.bonuses().get("planetry-oxygen"));
             else data.remove(oxygen);

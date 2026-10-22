@@ -65,7 +65,7 @@ lore:
   durability-low: '<gray>Durability: <red>{current}<gray>/{max}'
 
 messages:
-  usage: '<gray>/planetryitems list | give <player> <item> [amount] | reload | info'
+  usage: '<gray>/planetryitems list | give <player> <item> [amount] | reload | info | soulboundbypass'
   no-permission: '<red>You do not have permission to do that.'
   player-only: '<red>Only players can use this command.'
   unknown-item: '<red>Unknown item: {item}.'
@@ -83,6 +83,9 @@ messages:
   disabled-item: '<red>This item is unavailable. Contact an administrator.'
   integration-unavailable: '<red>This item needs an integration that is currently unavailable.'
   no-item: '<red>Hold a Planetry item first.'
+  soulbound-bypass-enabled: '<yellow>Soulbound drop bypass enabled. Drop a Soulbound item twice to confirm.'
+  soulbound-bypass-disabled: '<green>Soulbound drop bypass disabled.'
+  soulbound-drop-warning: 'This item is Soulbound, are you sure you want to drop it? Toggle this bypass with /planetryitems soulboundbypass'
   info: '<gray>Item: <white>{id}<gray>, durability: <white>{current}/{max}'
   migrate-usage: '<gray>/migrate'
   migrate-success: '<green>Migration complete: updated {updated} items and removed {removed} unavailable items.'

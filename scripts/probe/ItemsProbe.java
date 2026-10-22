@@ -66,6 +66,7 @@ public final class ItemsProbe extends JavaPlugin {
             glidingDurability();
             equipment();
             commands();
+            policies();
             glyphTemplates();
             if (integrations) integrationChecks();
             else missingHooks();
@@ -497,6 +498,288 @@ public final class ItemsProbe extends JavaPlugin {
         }
         player.admin = false; player.clear(); passed();
     }
+
+    private void policies() throws Exception {
+        var file = plugin.getDataFolder().toPath().resolve("items/policy.yml");
+        String definitions = """
+                items:
+                  policy_bound:
+                    material: STONE
+                    max-durability: 0
+                    max-stack-size: 64
+                    planetry-soulbound: true
+                  policy_noplace:
+                    material: STONE
+                    max-durability: 5
+                    planetry-canplace: false
+                    requirements: {planetry-gamelevel: 999999}
+                  policy_hat:
+                    material: PAPER
+                    type: COSMETIC
+                    planetry-soulbound: true
+                    requirements: {planetry-gamelevel: 999999}
+                  policy_arrow:
+                    material: ARROW
+                    max-durability: 0
+                    max-stack-size: 64
+                    planetry-soulbound: true
+                  policy_crossbow:
+                    material: CROSSBOW
+                    max-durability: 0
+                    planetry-soulbound: true
+                """;
+        Files.writeString(file, definitions, StandardCharsets.UTF_8);
+        var command = plugin.getCommand("planetryitems");
+        player.admin = true;
+        command.execute(player.player, "pitems", new String[]{"reload"});
+        Object policy = call(plugin, "policy");
+        ItemStack bound = create("policy_bound"), noPlace = create("policy_noplace");
+        stage = "policy flags on new, old, serialized, migrated and reloaded items";
+        var boundKey = new NamespacedKey(plugin, "soulbound");
+        var placeKey = new NamespacedKey(plugin, "can_place");
+        var foreign = new NamespacedKey("foreign", "policy-probe");
+        check(bound.getPersistentDataContainer().get(boundKey, PersistentDataType.BYTE) == 1, "Soulbound PDC missing");
+        check(noPlace.getPersistentDataContainer().get(placeKey, PersistentDataType.BYTE) == 0, "Can-place PDC missing");
+        check((boolean) call(items, "soulbound", ItemStack.deserializeBytes(bound.serializeAsBytes())), "Serialized flag lost");
+        bound.editPersistentDataContainer(data -> { data.remove(boundKey); data.set(foreign, PersistentDataType.STRING, "keep"); });
+        check((boolean) call(items, "soulbound", bound), "Old item without flag ignored current definition");
+        ItemStack migrated = (ItemStack) call(items, "migrate", bound, player.player);
+        check(migrated.getPersistentDataContainer().get(boundKey, PersistentDataType.BYTE) == 1
+                && "keep".equals(migrated.getPersistentDataContainer().get(foreign, PersistentDataType.STRING)), "Flag migration lost data");
+        Files.writeString(file, definitions.replace("planetry-soulbound: true", "planetry-soulbound: false")
+                .replace("planetry-canplace: false", "planetry-canplace: true"), StandardCharsets.UTF_8);
+        command.execute(player.player, "pitems", new String[]{"reload"});
+        check(!(boolean) call(items, "soulbound", migrated) && (boolean) call(items, "canPlace", noPlace), "Reload did not override saved flags");
+        Files.writeString(file, definitions, StandardCharsets.UTF_8);
+        command.execute(player.player, "pitems", new String[]{"reload"});
+        check((boolean) call(items, "soulbound", bound) && !(boolean) call(items, "canPlace", noPlace), "Reload flags not immediately enforced");
+        bound = migrated;
+        call(items, "refresh", bound, player.player);
+        passed();
+
+        stage = "silent placement veto in both hands with no durability cost";
+        var block = player.player.getWorld().getBlockAt(player.player.getLocation().add(18, 0, 0));
+        block.setType(Material.STONE);
+        for (EquipmentSlot hand : List.of(EquipmentSlot.HAND, EquipmentSlot.OFF_HAND)) {
+            player.inventory.setItem(hand, noPlace); player.messages.clear();
+            var interact = new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_BLOCK, noPlace, block, BlockFace.UP, hand);
+            fire(interact);
+            check(interact.useItemInHand() == Event.Result.DENY && interact.useInteractedBlock() != Event.Result.DENY
+                    && player.messages.isEmpty() && durability(noPlace) == 5, "Placement interaction messaged, charged or blocked chest use");
+            var place = new BlockPlaceEvent(block, block.getState(), block.getRelative(BlockFace.DOWN), noPlace, player.player, true, hand);
+            fire(place); check(place.isCancelled() && player.messages.isEmpty(), "Block placement not silently denied");
+            var bucket = new PlayerBucketEmptyEvent(player.player, block, block, BlockFace.UP, Material.WATER_BUCKET, new ItemStack(Material.BUCKET), hand);
+            fire(bucket); check(bucket.isCancelled(), "Bucket checked replacement instead of source hand");
+        }
+        player.clear(); passed();
+
+        stage = "external transfers, bundle writes, number/offhand swaps and positive inventory controls";
+        var p = new Fake("PolicyInventory", true);
+        p.viewType = InventoryType.CHEST; p.top = Bukkit.createInventory(null, 9); p.cursor = bound.clone();
+        for (InventoryAction action : List.of(InventoryAction.PLACE_ALL, InventoryAction.PLACE_ONE, InventoryAction.PLACE_SOME,
+                InventoryAction.SWAP_WITH_CURSOR, InventoryAction.PLACE_ALL_INTO_BUNDLE, InventoryAction.PLACE_SOME_INTO_BUNDLE,
+                InventoryAction.PLACE_FROM_BUNDLE)) {
+            var click = new InventoryClickEvent(p.view, InventoryType.SlotType.CONTAINER, 0, ClickType.LEFT, action);
+            fire(click); check(click.isCancelled(), "External transfer allowed: " + action);
+        }
+        for (InventoryAction action : List.of(InventoryAction.PICKUP_ALL, InventoryAction.COLLECT_TO_CURSOR,
+                InventoryAction.PICKUP_ALL_INTO_BUNDLE, InventoryAction.PICKUP_SOME_INTO_BUNDLE, InventoryAction.PICKUP_FROM_BUNDLE)) {
+            var click = new InventoryClickEvent(p.view, InventoryType.SlotType.CONTAINER, 0, ClickType.LEFT, action);
+            fire(click); check(!click.isCancelled(), "Retrieval was blocked: " + action);
+        }
+        p.cursor = null; p.items[0] = bound.clone(); p.items[40] = bound.clone();
+        for (ClickType clickType : List.of(ClickType.NUMBER_KEY, ClickType.SWAP_OFFHAND)) {
+            var click = new InventoryClickEvent(p.view, InventoryType.SlotType.CONTAINER, 0, clickType, InventoryAction.HOTBAR_SWAP, clickType == ClickType.NUMBER_KEY ? 0 : -1);
+            fire(click); check(click.isCancelled(), "Hotbar/offhand external swap allowed");
+        }
+        var shift = new InventoryClickEvent(p.view, InventoryType.SlotType.QUICKBAR, p.top.getSize() + 27, ClickType.SHIFT_LEFT, InventoryAction.MOVE_TO_OTHER_INVENTORY);
+        fire(shift); check(shift.isCancelled(), "Shift-click into chest allowed");
+        p.top.setItem(0, bound.clone());
+        var retrieve = new InventoryClickEvent(p.view, InventoryType.SlotType.CONTAINER, 0, ClickType.SHIFT_LEFT, InventoryAction.MOVE_TO_OTHER_INVENTORY);
+        fire(retrieve); check(!retrieve.isCancelled(), "Shift retrieval blocked");
+        p.cursor = bound.clone();
+        var drag = new InventoryDragEvent(p.view, bound.clone(), bound.clone(), false, Map.of(0, bound.clone(), 9, bound.clone()));
+        fire(drag); check(drag.isCancelled(), "Mixed external drag allowed");
+        p.top = p.enderChest; p.viewType = InventoryType.ENDER_CHEST;
+        var ender = new InventoryClickEvent(p.view, InventoryType.SlotType.CONTAINER, 0, ClickType.LEFT, InventoryAction.PLACE_ALL);
+        fire(ender); check(!ender.isCancelled(), "Own ender chest rejected");
+        var enderDrag = new InventoryDragEvent(p.view, bound.clone(), bound.clone(), false, Map.of(0, bound.clone(), 27, bound.clone()));
+        fire(enderDrag); check(!enderDrag.isCancelled(), "Own ender chest drag rejected");
+        p.top = Bukkit.createInventory(null, InventoryType.ENDER_CHEST);
+        var foreignEnder = new InventoryClickEvent(p.view, InventoryType.SlotType.CONTAINER, 0, ClickType.LEFT, InventoryAction.PLACE_ALL);
+        fire(foreignEnder); check(foreignEnder.isCancelled(), "Inventory type alone granted ender exemption");
+        p.top = Bukkit.createInventory(null, 9); p.viewType = InventoryType.CRAFTING;
+        var ownShift = new InventoryClickEvent(p.view, InventoryType.SlotType.QUICKBAR, 36, ClickType.SHIFT_LEFT, InventoryAction.MOVE_TO_OTHER_INVENTORY);
+        fire(ownShift); check(!ownShift.isCancelled(), "Personal shift movement blocked");
+        var ownPlace = new InventoryClickEvent(p.view, InventoryType.SlotType.CONTAINER, 9, ClickType.LEFT, InventoryAction.PLACE_ALL);
+        fire(ownPlace); check(!ownPlace.isCancelled(), "Own inventory placement blocked");
+        passed();
+
+        stage = "portable bundle and shulker carriers retain soulbound policy";
+        ItemStack bundle = new ItemStack(Material.BUNDLE);
+        BundleMeta bundleMeta = (BundleMeta) bundle.getItemMeta(); bundleMeta.addItem(bound.asOne()); bundle.setItemMeta(bundleMeta);
+        ItemStack shulker = new ItemStack(Material.SHULKER_BOX);
+        BlockStateMeta meta = (BlockStateMeta) shulker.getItemMeta();
+        var box = (org.bukkit.block.ShulkerBox) meta.getBlockState(); box.getInventory().setItem(0, bundle);
+        meta.setBlockState(box); shulker.setItemMeta(meta);
+        check((boolean) call(policy, "soulbound", bundle) && (boolean) call(policy, "soulbound", shulker)
+                && (boolean) call(policy, "placementBlocked", shulker), "Nested carrier escaped protection");
+        for (Action action : List.of(Action.RIGHT_CLICK_AIR, Action.RIGHT_CLICK_BLOCK)) {
+            var unload = new PlayerInteractEvent(player.player, action, bundle, action == Action.RIGHT_CLICK_BLOCK ? block : null, BlockFace.UP, EquipmentSlot.HAND);
+            fire(unload);
+            check(unload.useItemInHand() == Event.Result.DENY
+                    && ((BundleMeta) bundle.getItemMeta()).getItems().getFirst().equals(bound.asOne()), "Bundle could unload protected contents before drop veto");
+        }
+        ItemStack charged = new ItemStack(Material.CROSSBOW);
+        charged.setData(DataComponentTypes.CHARGED_PROJECTILES, io.papermc.paper.datacomponent.item.ChargedProjectiles.chargedProjectiles(List.of(bound.asOne())));
+        check((boolean) call(policy, "soulbound", charged), "Charged carrier hid protected item");
+        ItemStack arrow = create("policy_arrow"), boundCrossbow = create("policy_crossbow");
+        player.clear(); player.items[0] = boundCrossbow; player.items[40] = arrow;
+        var load = new io.papermc.paper.event.entity.EntityLoadCrossbowEvent(player.player, boundCrossbow, EquipmentSlot.HAND);
+        fire(load); check(load.isCancelled() && arrow.getAmount() == 1, "Crossbow loaded protected recoverable ammo");
+        player.items[40] = new ItemStack(Material.ARROW);
+        var ordinaryLoad = new io.papermc.paper.event.entity.EntityLoadCrossbowEvent(player.player, boundCrossbow, EquipmentSlot.HAND);
+        fire(ordinaryLoad); check(!ordinaryLoad.isCancelled(), "Soulbound crossbow with ordinary ammo was blocked");
+        var shoot = new EntityShootBowEvent(player.player, new ItemStack(Material.BOW), arrow, entity(), EquipmentSlot.HAND, 1f, true);
+        fire(shoot); check(shoot.isCancelled() && arrow.getAmount() == 1, "Bow fired protected recoverable ammo");
+        boundCrossbow.setData(DataComponentTypes.CHARGED_PROJECTILES, io.papermc.paper.datacomponent.item.ChargedProjectiles.chargedProjectiles(List.of(arrow)));
+        var chargedBefore = boundCrossbow.getData(DataComponentTypes.CHARGED_PROJECTILES);
+        var shootCharged = new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_AIR, boundCrossbow, null, BlockFace.UP, EquipmentSlot.HAND);
+        fire(shootCharged);
+        check(shootCharged.useItemInHand() == Event.Result.DENY && chargedBefore.equals(boundCrossbow.getData(DataComponentTypes.CHARGED_PROJECTILES)), "Loaded protected ammo was cleared before veto");
+        boundCrossbow.setData(DataComponentTypes.CHARGED_PROJECTILES, io.papermc.paper.datacomponent.item.ChargedProjectiles.chargedProjectiles(List.of(new ItemStack(Material.ARROW))));
+        var ordinaryCharged = new PlayerInteractEvent(player.player, Action.RIGHT_CLICK_AIR, boundCrossbow, null, BlockFace.UP, EquipmentSlot.HAND);
+        fire(ordinaryCharged); check(ordinaryCharged.useItemInHand() != Event.Result.DENY, "Soulbound crossbow with ordinary loaded ammo could not fire");
+        player.clear();
+        passed();
+
+        stage = "drop toggle, exact warning, one confirmation per gesture and expiry/session fencing";
+        p.clear(); p.gameMode = GameMode.CREATIVE;
+        p.cursor = bound.clone();
+        var blockedCursor = new InventoryClickEvent(p.view, InventoryType.SlotType.OUTSIDE, -999, ClickType.LEFT, InventoryAction.DROP_ALL_CURSOR);
+        fire(blockedCursor); check(blockedCursor.isCancelled() && p.cursor.equals(bound), "Cursor drop was not stopped before mutation");
+        p.admin = false;
+        command.execute(p.player, "pitems", new String[]{"soulboundbypass"});
+        check(drop(p, bound).isCancelled(), "Nonadmin enabled bypass");
+        p.admin = true; p.messages.clear();
+        command.execute(p.player, "pitems", new String[]{"soulboundbypass"});
+        check(((List<?>) call(plugin, "onTabComplete", p.player, command, "pitems", new String[]{"soul"})).contains("soulboundbypass"), "Bypass completion absent");
+        var first = new InventoryCreativeEvent(p.view, InventoryType.SlotType.OUTSIDE, -999, bound.clone());
+        fire(first); check(first.isCancelled(), "Creative first gesture bypassed confirmation");
+        check(contains(p.messages, "This item is Soulbound, are you sure you want to drop it? Toggle this bypass with /planetryitems soulboundbypass"), "Exact warning absent");
+        var second = new InventoryCreativeEvent(p.view, InventoryType.SlotType.OUTSIDE, -999, bound.clone());
+        fire(second); check(!second.isCancelled() && !drop(p, bound).isCancelled(), "Second creative gesture did not receive one native drop permit");
+        check(drop(p, bound).isCancelled(), "Confirmation allowed repeated drops");
+        ItemStack changed = bound.clone(); changed.editPersistentDataContainer(data -> data.set(foreign, PersistentDataType.STRING, "different"));
+        check(drop(p, changed).isCancelled(), "Different metadata confirmed previous item");
+        check(drop(p, bound.asQuantity(2)).isCancelled(), "Different quantity confirmed previous item");
+        p.admin = false; check(drop(p, bound.asQuantity(2)).isCancelled(), "Permission loss retained bypass");
+        p.admin = true; check(drop(p, bound.asQuantity(2)).isCancelled(), "Regained permission silently reenabled bypass");
+        command.execute(p.player, "pitems", new String[]{"soulboundbypass"});
+        check(drop(p, bound).isCancelled(), "First held drop allowed");
+        fire(new PlayerQuitEvent(p.player, Component.empty()));
+        check(drop(p, bound).isCancelled(), "Quit retained bypass");
+        long[] now = {0};
+        var constructor = policy.getClass().getDeclaredConstructor(plugin.getClass(), java.util.function.LongSupplier.class);
+        constructor.setAccessible(true);
+        Object timed = constructor.newInstance(plugin, (java.util.function.LongSupplier) () -> now[0]);
+        call(timed, "toggleBypass", p.player);
+        var expiredFirst = dropEvent(p, bound); call(timed, "drop", expiredFirst);
+        now[0] = 2_000_000_001L;
+        var expiredSecond = dropEvent(p, bound); call(timed, "drop", expiredSecond);
+        check(expiredFirst.isCancelled() && expiredSecond.isCancelled(), "Expired confirmation allowed drop");
+        var confirmed = dropEvent(p, bound); call(timed, "drop", confirmed); check(!confirmed.isCancelled(), "Fresh second drop rejected");
+        var replacement = new Fake(p.id, p.name, true);
+        var otherSession = dropEvent(replacement, bound); call(timed, "drop", otherSession);
+        check(otherSession.isCancelled(), "Replacement Player inherited bypass");
+        passed();
+
+        stage = "durable cursor recovery on close, quit, death, readiness and capacity";
+        Object recovery = call(plugin, "recovery");
+        var r = new Fake("CursorRecovery", false);
+        var recoveryKey = new NamespacedKey(plugin, "soulbound_recovery");
+        for (int slot = 0; slot < 36; slot++) r.items[slot] = new ItemStack(Material.DIRT, 64);
+        r.cursor = bound.asQuantity(2);
+        ItemStack expectedCursor = r.cursor.clone();
+        ItemStack[] beforeRecovery = snapshot(r);
+        fire(new InventoryCloseEvent(r.view));
+        check(empty(r.cursor) && r.data.has(recoveryKey, PersistentDataType.BYTE_ARRAY), "Close did not preserve full cursor before native cleanup");
+        byte[] pendingBytes = r.data.get(recoveryKey, PersistentDataType.BYTE_ARRAY);
+        check(Arrays.equals(ItemStack.deserializeItemsFromBytes(pendingBytes), new ItemStack[]{expectedCursor}), "Escrow changed metadata or quantity");
+        call(recovery, "recover", r.player);
+        check(Arrays.equals(beforeRecovery, snapshot(r)) && Arrays.equals(pendingBytes, r.data.get(recoveryKey, PersistentDataType.BYTE_ARRAY)), "Full recovery mutated items");
+        r.items[2] = null;
+        if (integrations) {
+            setField("NetworkInventorySync", "ready", false);
+            call(recovery, "recover", r.player);
+            check(empty(r.items[2]) && r.data.has(recoveryKey), "Unready recovery mutated storage");
+            setField("NetworkInventorySync", "ready", true);
+        }
+        // Recreate the service to model plugin restart with only persisted player data.
+        Object restartedRecovery = recovery.getClass().getConstructor(plugin.getClass()).newInstance(plugin);
+        call(restartedRecovery, "recover", r.player);
+        check(expectedCursor.equals(r.items[2]) && !r.data.has(recoveryKey), "Recovery after restart lost or duplicated cursor");
+        call(restartedRecovery, "recover", r.player);
+        check(expectedCursor.equals(r.items[2]) && r.count("policy_bound") == 2, "Repeated recovery duplicated items");
+        r.cursor = bound.clone(); fire(new PlayerQuitEvent(r.player, Component.empty()));
+        check(empty(r.cursor) && r.data.has(recoveryKey), "Quit cursor lost");
+        r.items[3] = null; call(recovery, "recover", r.player);
+        check(r.count("policy_bound") == 3 && !r.data.has(recoveryKey), "Quit recovery lost quantity");
+        r.cursor = bound.clone();
+        var cursorDeath = new PlayerDeathEvent(r.player, DamageSource.builder(DamageType.GENERIC).build(), new ArrayList<>(), 0, Component.empty(), false);
+        cursorDeath.setKeepInventory(true); fire(cursorDeath);
+        check(empty(r.cursor) && r.data.has(recoveryKey), "Keep-inventory death lost protected cursor");
+        r.items[4] = null; call(recovery, "recover", r.player);
+        check(r.count("policy_bound") == 4 && !r.data.has(recoveryKey), "Death cursor recovery lost quantity");
+        // Recovery can merge prior stacks, leaving the freed slots empty. Start a fully
+        // occupied fixture with no matching merge capacity for the corruption scenario.
+        for (int slot = 0; slot < 36; slot++) r.items[slot] = new ItemStack(Material.DIRT, 64);
+        byte[] corrupt = {1, 127, 127, 127, 127};
+        r.data.set(recoveryKey, PersistentDataType.BYTE_ARRAY, corrupt); r.cursor = bound.clone();
+        fire(new InventoryCloseEvent(r.view));
+        var extraKey = r.data.getKeys().stream().filter(key -> key.getKey().startsWith("soulbound_recovery_extra/")).findFirst().orElseThrow();
+        check(empty(r.cursor) && Arrays.equals(corrupt, r.data.get(recoveryKey, PersistentDataType.BYTE_ARRAY))
+                && Arrays.equals(new ItemStack[]{bound}, ItemStack.deserializeItemsFromBytes(r.data.get(extraKey, PersistentDataType.BYTE_ARRAY))), "Corruption prevented preserving new cursor independently");
+        r.cursor = null; // Native cleanup now has no carried item to discard or drop.
+        call(recovery, "recover", r.player);
+        check(r.data.has(extraKey) && Arrays.equals(corrupt, r.data.get(recoveryKey, PersistentDataType.BYTE_ARRAY)), "Full recovery discarded isolated queue");
+        r.items[5] = null; call(recovery, "recover", r.player);
+        check(bound.equals(r.items[5]) && !r.data.has(extraKey) && Arrays.equals(corrupt, r.data.get(recoveryKey, PersistentDataType.BYTE_ARRAY)), "Isolated recovery did not preserve both old bytes and new item");
+        r.data.remove(recoveryKey); r.clear();
+        for (int index = 0; index < 37; index++) {
+            ItemStack distinct = bound.asOne();
+            final int itemIndex = index;
+            distinct.editPersistentDataContainer(data -> data.set(foreign, PersistentDataType.STRING, "unique-" + itemIndex));
+            r.cursor = distinct; call(recovery, "captureCursor", r.player);
+        }
+        check(ItemStack.deserializeItemsFromBytes(r.data.get(recoveryKey, PersistentDataType.BYTE_ARRAY)).length == 37, "Large pending queue lost entries");
+        call(recovery, "recover", r.player);
+        var last = ItemStack.deserializeItemsFromBytes(r.data.get(recoveryKey, PersistentDataType.BYTE_ARRAY));
+        check(r.count("policy_bound") == 36 && last.length == 1
+                && "unique-36".equals(last[0].getPersistentDataContainer().get(foreign, PersistentDataType.STRING)), "Queue larger than storage failed to make partial progress");
+        r.items[0] = null; call(recovery, "recover", r.player);
+        check(last[0].equals(r.items[0]) && !r.data.has(recoveryKey), "Incremental capacity did not finish remainder recovery");
+        passed();
+
+        stage = "death quantity retention and full-inventory equipment preservation";
+        var drops = new ArrayList<ItemStack>(List.of(bound.clone(), bound.clone(), new ItemStack(Material.DIRT)));
+        var death = new PlayerDeathEvent(p.player, DamageSource.builder(DamageType.GENERIC).build(), drops, 0, Component.empty(), false);
+        fire(death);
+        check(death.getDrops().size() == 1 && death.getItemsToKeep().size() == 2
+                && death.getItemsToKeep().stream().mapToInt(ItemStack::getAmount).sum() == 2, "Death retention lost/duplicated exact stacks");
+        player.clear(); for (int slot = 0; slot < 36; slot++) player.items[slot] = new ItemStack(Material.STONE, 64);
+        player.items[39] = create("policy_hat");
+        call(guard, "reconcile", player.player);
+        check(!empty(player.items[39]) && "policy_hat".equals(call(items, "id", player.items[39]))
+                && player.items[39].getData(DataComponentTypes.ATTRIBUTE_MODIFIERS).modifiers().isEmpty(), "Full storage discarded soulbound equipment");
+        player.clear(); player.admin = false; p.clear(); call(policy, "clear"); passed();
+    }
+
+    private PlayerDropItemEvent dropEvent(Fake target, ItemStack stack) {
+        var entity = proxy(org.bukkit.entity.Item.class, (object, method, args) -> method.getName().equals("getItemStack") ? stack.clone() : zero(method.getReturnType()));
+        return new PlayerDropItemEvent(target.player, entity);
+    }
+    private PlayerDropItemEvent drop(Fake target, ItemStack stack) { var event = dropEvent(target, stack); fire(event); return event; }
 
     private void commandInfo() {
         var command = plugin.getCommand("planetryitems");
@@ -1214,7 +1497,9 @@ public final class ItemsProbe extends JavaPlugin {
         final UUID id; final String name;
         final ItemStack[] items = new ItemStack[43]; final List<String> messages = new ArrayList<>();
         final PersistentDataContainer data = new ItemStack(Material.PAPER).getItemMeta().getPersistentDataContainer();
-        Player player; PlayerInventory inventory; InventoryView view; Inventory top;
+        Player player; PlayerInventory inventory; InventoryView view; Inventory top, enderChest;
+        InventoryType viewType = InventoryType.CRAFTING;
+        GameMode gameMode = GameMode.SURVIVAL;
         ItemStack cursor; boolean admin, legacyAdmin, blocking, gliding; boolean glyphAllowed = true; int breaks, sounds;
         Fake(String name, boolean admin) {
             this(UUID.randomUUID(), name, admin);
@@ -1260,7 +1545,8 @@ public final class ItemsProbe extends JavaPlugin {
                 case "isBlocking" -> blocking;
                 case "isGliding" -> gliding;
                 case "setGliding" -> { gliding = (boolean) args[0]; yield null; }
-                case "getGameMode" -> GameMode.SURVIVAL; case "getInventory" -> inventory; case "getOpenInventory" -> view;
+                case "getGameMode" -> gameMode; case "getInventory" -> inventory; case "getOpenInventory" -> view;
+                case "getEnderChest" -> enderChest;
                 case "getWorld" -> Bukkit.getWorlds().getFirst(); case "getLocation" -> Bukkit.getWorlds().getFirst().getSpawnLocation();
                 case "getItemOnCursor" -> cursor == null ? ItemStack.of(Material.AIR) : cursor;
                 case "setItemOnCursor" -> { cursor = (ItemStack) args[0]; yield null; }
@@ -1274,13 +1560,14 @@ public final class ItemsProbe extends JavaPlugin {
                 default -> zero(method.getReturnType());
             });
             top = Bukkit.createInventory(null, 9);
+            enderChest = Bukkit.createInventory(null, InventoryType.ENDER_CHEST);
             view = proxy(InventoryView.class, (object, method, args) -> switch (method.getName()) {
                 case "getPlayer" -> player; case "getTopInventory" -> top; case "getBottomInventory" -> inventory;
-                case "getType" -> InventoryType.CRAFTING; case "countSlots" -> 46;
+                case "getType" -> viewType; case "countSlots" -> viewType == InventoryType.CRAFTING ? 46 : top.getSize() + 36;
                 case "convertSlot" -> convert((int) args[0]); case "getSlotType" -> slotType((int) args[0]);
-                case "getInventory" -> (int) args[0] < 0 ? null : (int) args[0] < 5 ? top : inventory;
-                case "getItem" -> (int) args[0] < 5 ? top.getItem((int) args[0]) : items[convert((int) args[0])];
-                case "setItem" -> { int raw = (int) args[0]; if (raw < 5) top.setItem(raw, (ItemStack) args[1]); else items[convert(raw)] = (ItemStack) args[1]; yield null; }
+                case "getInventory" -> (int) args[0] < 0 ? null : (int) args[0] < topSlots() ? top : inventory;
+                case "getItem" -> (int) args[0] < 0 ? null : (int) args[0] < topSlots() ? top.getItem((int) args[0]) : items[convert((int) args[0])];
+                case "setItem" -> { int raw = (int) args[0]; if (raw < topSlots()) top.setItem(raw, (ItemStack) args[1]); else items[convert(raw)] = (ItemStack) args[1]; yield null; }
                 case "getCursor" -> cursor == null ? ItemStack.of(Material.AIR) : cursor;
                 case "setCursor" -> { cursor = (ItemStack) args[0]; yield null; }
                 case "getTitle", "getOriginalTitle" -> "Probe inventory"; case "title" -> Component.text("Probe inventory");
@@ -1293,8 +1580,9 @@ public final class ItemsProbe extends JavaPlugin {
             String name = value instanceof Permission permission ? permission.getName() : String.valueOf(value);
             return name.equals("planetry.admin.items") ? admin : name.equals("planetryitems.admin") && legacyAdmin;
         }
-        int convert(int raw) { if (raw < 5) return raw; if (raw < 9) return 44 - raw; if (raw < 36) return raw; if (raw < 45) return raw - 36; return 40; }
-        InventoryType.SlotType slotType(int raw) { return raw < 0 ? InventoryType.SlotType.OUTSIDE : raw == 0 ? InventoryType.SlotType.RESULT : raw < 5 ? InventoryType.SlotType.CRAFTING : raw < 9 ? InventoryType.SlotType.ARMOR : raw < 36 ? InventoryType.SlotType.CONTAINER : InventoryType.SlotType.QUICKBAR; }
+        int topSlots() { return viewType == InventoryType.CRAFTING ? 5 : top.getSize(); }
+        int convert(int raw) { if (viewType != InventoryType.CRAFTING) { if (raw < top.getSize()) return raw; int bottom = raw - top.getSize(); return bottom < 27 ? bottom + 9 : bottom - 27; } if (raw < 5) return raw; if (raw < 9) return 44 - raw; if (raw < 36) return raw; if (raw < 45) return raw - 36; return 40; }
+        InventoryType.SlotType slotType(int raw) { if (viewType != InventoryType.CRAFTING) return raw < 0 ? InventoryType.SlotType.OUTSIDE : raw < top.getSize() + 27 ? InventoryType.SlotType.CONTAINER : InventoryType.SlotType.QUICKBAR; return raw < 0 ? InventoryType.SlotType.OUTSIDE : raw == 0 ? InventoryType.SlotType.RESULT : raw < 5 ? InventoryType.SlotType.CRAFTING : raw < 9 ? InventoryType.SlotType.ARMOR : raw < 36 ? InventoryType.SlotType.CONTAINER : InventoryType.SlotType.QUICKBAR; }
         ItemStack hand(int slot) { return items[slot] == null ? ItemStack.of(Material.AIR) : items[slot]; }
         int firstEmpty() { for (int slot = 0; slot < 36; slot++) if (empty(items[slot])) return slot; return -1; }
         Map<Integer, ItemStack> add(ItemStack[] incoming) { Map<Integer, ItemStack> remaining = new HashMap<>(); for (int n = 0; n < incoming.length; n++) { int slot = firstEmpty(); if (slot < 0) remaining.put(n, incoming[n].clone()); else items[slot] = incoming[n].clone(); } return remaining; }

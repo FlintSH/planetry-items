@@ -18,6 +18,8 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     private IntegrationHooks hooks;
     private ItemService items;
     private ItemGuard guard;
+    private ItemPolicy policy;
+    private SoulboundRecovery recovery;
     private int refreshTicks;
     private static final long MIGRATE_COOLDOWN = 2 * 60 * 60 * 1000L;
 
@@ -30,8 +32,11 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
             }
             ItemFiles.initialize(getDataFolder().toPath(), getResource("items.yml"));
             loadDefinitions();
+            policy = new ItemPolicy(this);
+            recovery = new SoulboundRecovery(this);
             guard = new ItemGuard(this);
             Bukkit.getPluginManager().registerEvents(guard, this);
+            Bukkit.getPluginManager().registerEvents(policy, this);
             Objects.requireNonNull(getCommand("planetryitems")).setExecutor(this);
             getCommand("planetryitems").setTabCompleter(this);
             Objects.requireNonNull(getCommand("migrate")).setExecutor(this);
@@ -73,12 +78,17 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         catalog = nextCatalog; language = nextLanguage; refreshTicks = ticks;
     }
 
-    @Override public void onDisable() { if (hooks != null) hooks.close(); }
+    @Override public void onDisable() {
+        if (recovery != null) Bukkit.getOnlinePlayers().forEach(recovery::captureCursor);
+        if (hooks != null) hooks.close(); if (policy != null) policy.clear();
+    }
     public ItemCatalog catalog() { return catalog; }
     public ItemLanguage language() { return language; }
     public IntegrationHooks hooks() { return hooks; }
     public ItemService items() { return items; }
     public ItemGuard guard() { return guard; }
+    public ItemPolicy policy() { return policy; }
+    public SoulboundRecovery recovery() { return recovery; }
 
     public void message(CommandSender recipient, String key, Map<String, String> values) {
         recipient.sendMessage(language.text(key, values, hooks.glyphs(recipient instanceof Player player ? player : null), recipient));
@@ -87,9 +97,16 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (command.getName().equalsIgnoreCase("migrate")) return migrate(sender, args);
         if (!sender.hasPermission("planetry.admin.items")) { message(sender, "messages.no-permission", Map.of()); return true; }
+        if (args.length == 1 && args[0].equalsIgnoreCase("soulboundbypass")) {
+            if (!(sender instanceof Player player)) { message(sender, "messages.player-only", Map.of()); return true; }
+            boolean enabled = policy().toggleBypass(player);
+            message(player, enabled ? "messages.soulbound-bypass-enabled" : "messages.soulbound-bypass-disabled", Map.of());
+            return true;
+        }
         if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
             try {
                 loadDefinitions();
+                policy.clear();
                 Bukkit.getOnlinePlayers().forEach(guard::beginSession);
                 message(sender, "messages.reloaded", Map.of());
             } catch (Exception error) {
@@ -181,6 +198,8 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         values.put("amount", Integer.toString(stack.getAmount())); values.put("stack", Integer.toString(def.maxStackSize()));
         values.put("current", Integer.toString(items.currentDurability(stack))); values.put("max", Integer.toString(def.maxDurability()));
         values.put("unbreakable", Boolean.toString(def.unbreakable()));
+        values.put("planetry-canplace", Boolean.toString(def.canPlace()));
+        values.put("planetry-soulbound", Boolean.toString(def.soulbound()));
         values.put("attributes", attributes.isEmpty() ? "none" : String.join("; ", attributes));
         values.put("bonuses", def.bonuses().isEmpty() ? "none" : def.bonuses().toString());
         values.put("requirements", requirements.isEmpty() ? "none" : String.join(", ", requirements));
@@ -189,13 +208,13 @@ public final class PlanetryItems extends JavaPlugin implements TabCompleter {
         message(player, "messages.info", values);
         // Detail output remains complete even when an administrator retains the old customizable header.
         for (String field : List.of("name", "material", "configured-material", "rarity", "type", "model", "nexo", "base64", "equip",
-                "amount", "stack", "unbreakable", "attributes", "bonuses", "requirements", "lore", "usable"))
+                "amount", "stack", "unbreakable", "planetry-canplace", "planetry-soulbound", "attributes", "bonuses", "requirements", "lore", "usable"))
             player.sendMessage(net.kyori.adventure.text.Component.text(field + ": " + values.get(field)));
     }
 
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (command.getName().equalsIgnoreCase("migrate") || !sender.hasPermission("planetry.admin.items")) return List.of();
-        List<String> options = args.length == 1 ? List.of("give", "list", "reload", "info")
+        List<String> options = args.length == 1 ? List.of("give", "list", "reload", "info", "soulboundbypass")
                 : args.length == 2 && args[0].equalsIgnoreCase("give") ? Bukkit.getOnlinePlayers().stream().map(Player::getName).toList()
                 : args.length == 3 && args[0].equalsIgnoreCase("give") ? new ArrayList<>(catalog.definitions().keySet()) : List.of();
         String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);

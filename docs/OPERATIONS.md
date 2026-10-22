@@ -51,6 +51,7 @@ There is no requirement bypass node.
 | `/pitems list` | Staff/console; list active case-sensitive IDs |
 | `/pitems give <online-player> <id> [amount]` | Staff/console; exact online player name; amount defaults to 1, allowed 1–2304 |
 | `/pitems info` | Staff player; inspect the managed item in the main hand |
+| `/pitems soulboundbypass` | Staff player only; toggle the limited soulbound drop override; off by default |
 | `/pitems reload` | Staff/console; validate and activate all configuration together |
 | `/migrate` | Any player; no permission, no arguments or target; update their carried inventory |
 
@@ -62,8 +63,23 @@ overflow drops. It does not grant to offline players or across backends.
 
 `info` shows the ID/current durability, configured and effective material,
 model data, name, rarity, type, visual source, equipment slot, quantity,
-stack size, unbreakable flag, attributes, bonuses, requirements, flavour lore
+stack size, unbreakable flag, `planetry-canplace`, `planetry-soulbound`, attributes, bonuses, requirements, flavour lore
 and current usability. It requires a recognized active definition.
+
+`/pitems soulboundbypass` uses the existing `planetry.admin.items` permission;
+console cannot use it. Each player's toggle starts **off** and resets on
+session changes (including reconnects), reload and death. While it is on, the
+first explicit soulbound drop is cancelled and sends this default warning:
+
+> This item is Soulbound, are you sure you want to drop it? Toggle this bypass with /planetryitems soulboundbypass
+
+Repeat the drop with an identical item and amount within **two seconds** to
+allow that drop once. A changed item/amount or expired confirmation needs a
+new warning; one confirmed drop does not authorize another. The toggle stays
+on until disabled or reset. It never permits chest/external storage, world
+deposits or placement, death drops or a requirements bypass. It does not make
+a soulbound trident throwable. See [language keys](LANGUAGE.md#message-substitutions)
+to translate the toggle messages and warning.
 
 ## Reload and recover
 
@@ -185,7 +201,10 @@ and permissions are covered in the [language guide](LANGUAGE.md#nexo-glyphs-and-
 | Old item still looks different | A partial migration may be waiting for source/space; periodic refresh alone does not rebuild all visuals |
 | Migration incomplete | Free storage for split stacks, clear oversized cursor stacks, and check missing Nexo sources; retry |
 | Item disappeared after update/server switch | Compare IDs/catalogs on every backend; restore missing definitions to prevent further removals and review inventory backups |
-| Equipped item moved or dropped | Player lost requirements; check storage capacity and Core/AuraSkills availability |
+| Equipped item moved or dropped | Player lost requirements; check storage capacity and Core/AuraSkills availability; full storage leaves soulbound equipment worn without native attributes or AuraSkills bonuses until space opens |
+| Item will not place, with no message | Check `planetry-canplace` and `planetry-soulbound`; blocked placement spends no item or custom durability |
+| Soulbound item will not enter a chest or drop | External writes and world deposits are blocked, including carriers with nested soulbound contents; own ender chest and safe retrieval remain available |
+| Staff drop override does not work | Use a player with `planetry.admin.items`, enable `/pitems soulboundbypass`, then repeat an identical item/amount drop within two seconds; reconnects, reload and death reset it |
 | Crafting/repair result blocked | Managed items cannot be used in supported crafting/workstation result paths; there is no custom repair command |
 | Food lasts many meals | Default durability is 100; use 0 for single-use consumables or intentionally design reusable food |
 
@@ -194,3 +213,17 @@ reproduction steps, `/pitems info` output and a **redacted** relevant console
 error. Do not post secrets, private connection details or whole server configs.
 Automated probe results and real-client/staging limits are documented in
 [acceptance checks](ACCEPTANCE.md).
+
+## Soulbound cursor recovery
+
+Closing a menu, disconnecting or dying with a protected item on the cursor
+saves that exact stack in the player's normal backend data before native cursor
+cleanup. It returns automatically once the player is online, alive, Inventory
+Sync is ready and storage has room. Items return as space opens; exact remainders stay saved. Free inventory space if
+it has not returned yet. No overflow stack is dropped.
+
+Pending recovery belongs to the backend where the menu closed. It is not part
+of Inventory Sync's shared inventory profile; return to that backend to receive
+it. Keep its normal player-data backups. Do not edit or delete the
+`planetryitems:soulbound_recovery` player-data entry to resolve a pending item.
+Malformed recovery data is retained and logged for operator review.

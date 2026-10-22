@@ -80,7 +80,7 @@ be unique across all files and subfolders. Keep backups outside `items/`.
 | `staff_blade` | Attributes, scalar modifiers, level requirements and bonuses |
 | `staff_helmet` | Wearable PAPER, oxygen metadata and armour |
 | `staff_ration` | Ordinary single-use food |
-| `staff_keepsake` | Unbreakable cosmetic head |
+| `staff_keepsake` | Unbreakable soulbound cosmetic head with placement disabled |
 | `staff_nexo_pickaxe` | Nexo appearance and a skill requirement |
 
 Copy the file into `items/`, or copy individual entries into an existing file.
@@ -143,16 +143,47 @@ the staff permission do not bypass requirements. Staff can give an item to
 someone who does not qualify, but it remains unusable.
 
 Players can hold restricted items in either hand and move them through
-storage. Native attributes and AuraSkills bonuses remain inactive. Activation,
+storage within their soulbound policy, if configured. Native attributes and
+AuraSkills bonuses remain inactive. Activation,
 attacking, mining, consumption, projectiles and armour-equipping are blocked.
 If requirements are lost while wearing an item, it moves to storage, or drops
-beside the player when storage is full.
+beside the player when storage is full. Soulbound equipment stays worn when
+storage is full, without native attributes or AuraSkills bonuses, until space
+becomes available.
 
 Use `ARMOUR`, `SPACESUIT` or `COSMETIC` with `equip-slot: HEAD`, `CHEST`, `LEGS`,
 `FEET` or `OFF_HAND`. Wearables must have stack size 1. Equipment `OFF_HAND`
 is spelled differently from the attribute slot group `OFFHAND`. PAPER can be
 equipped, but a worn model needs a resource pack. Oxygen is saved metadata;
 PlanetryItems does not consume it or implement an oxygen survival system.
+
+## Keep an item with its player
+
+Set `planetry-canplace: false` to silently prevent world placement from either
+hand without spending the item or custom durability. Set
+`planetry-soulbound: true` to also block drops, world deposits and external
+inventory writes. The player can still move it around their own storage,
+equipment and cursor, and use their own ender chest. Safe retrieval from other
+inventories remains available. Ordinary food/tool use still works; soulbound
+tridents cannot be thrown. On death, only soulbound items and carriers
+containing them are retained; ordinary items follow normal death rules.
+
+Both flags accept only unquoted YAML `true` or `false`. Defaults are
+`planetry-canplace: true` and `planetry-soulbound: false`. Put each at the item
+root or under `bonuses`, once per flag; repeating a flag across both locations
+rejects reload. They are policy flags with no automatic lore, not numeric
+Minecraft attributes. The example `staff_keepsake` demonstrates both locations.
+Bundles/container items with nested soulbound contents receive the same
+protection. Read [the policy reference](CONFIGURATION.md#placement-and-soulbound-policies)
+before applying it to existing items.
+
+For a deliberate staff drop, `/pitems soulboundbypass` uses your existing staff
+permission and is player-only. It defaults to off and resets on session
+changes, reload and death. When enabled, the first explicit drop warns; repeat
+the identical item and amount within two seconds to permit that drop once.
+It does not permit external storage, placement or death drops, and grants no
+requirements bypass. The exact warning and confirmation rules are in
+[operations](OPERATIONS.md#commands-and-permissions).
 
 ## Change text and appearance
 
@@ -173,6 +204,10 @@ be combined with `nexo-id`. See [models and textures](CONFIGURATION.md#models-an
 - Compare players below and above each requirement. Met requirement lines
   disappear for the holder; unusable items give no passive bonuses.
 - Test the configured slot, both hands where relevant, and unequipping.
+- Test placement and soulbound flags with ordinary items as controls: own ender
+  chest/retrieval must work; chest writes, drops and nested-carrier escapes must
+  fail. Check death keeps only protected items and full storage retains unusable
+  soulbound equipment without bonuses. Test the staff drop confirmation separately.
 - Use a low-durability test copy. Check the red final 10%, one point per accepted
   action, and removal at zero. Unbreakable items have no durability line.
 - Check actual Nexo/AuraSkills builds and the resource pack with a real client.

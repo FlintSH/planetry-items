@@ -30,6 +30,37 @@ class ItemLanguageTest {
         assertEquals(List.of("ɪᴛᴇᴍ", "", "COMMON"), plain(language("").lore(item, 0, Set.of(), null)));
     }
 
+    @Test void policyFlagsDoNotAddAutomaticLoreLines() throws Exception {
+        for (String settings : List.of("planetry-canplace: false\nplanetry-soulbound: true\n",
+                "bonuses:\n  planetry-canplace: false\n  planetry-soulbound: true\n")) {
+            var item = item("max-durability: 0\n" + settings);
+            assertEquals(List.of("ɪᴛᴇᴍ", "", "COMMON"), plain(language("").lore(item, 0, Set.of(), null)));
+        }
+    }
+
+    @Test void retainedLanguageFilesReceiveSoulboundMessageDefaults() throws Exception {
+        var lang = language("messages:\n  no-item: 'Retained custom message'\n");
+        assertEquals("Retained custom message", PLAIN.serialize(lang.text("messages.no-item", Map.of(), null)));
+        assertEquals("This item is Soulbound, are you sure you want to drop it? Toggle this bypass with /planetryitems soulboundbypass",
+                PLAIN.serialize(lang.text("messages.soulbound-drop-warning", Map.of(), null)));
+        assertEquals("Soulbound drop bypass enabled. Drop a Soulbound item twice to confirm.",
+                PLAIN.serialize(lang.text("messages.soulbound-bypass-enabled", Map.of(), null)));
+        assertEquals("Soulbound drop bypass disabled.",
+                PLAIN.serialize(lang.text("messages.soulbound-bypass-disabled", Map.of(), null)));
+    }
+
+    @Test void soulboundMessagesRemainCustomizable() throws Exception {
+        var lang = language("""
+                messages:
+                  soulbound-drop-warning: '<yellow>Drop again to confirm.'
+                  soulbound-bypass-enabled: 'Bypass on'
+                  soulbound-bypass-disabled: 'Bypass off'
+                """);
+        assertEquals("Drop again to confirm.", PLAIN.serialize(lang.text("messages.soulbound-drop-warning", Map.of(), null)));
+        assertEquals("Bypass on", PLAIN.serialize(lang.text("messages.soulbound-bypass-enabled", Map.of(), null)));
+        assertEquals("Bypass off", PLAIN.serialize(lang.text("messages.soulbound-bypass-disabled", Map.of(), null)));
+    }
+
     @Test void ordersSectionsAndOnlyShowsUnmetRequirements() throws Exception {
         var item = item("""
                 type: WEAPON

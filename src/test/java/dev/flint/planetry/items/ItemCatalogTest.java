@@ -100,6 +100,8 @@ class ItemCatalogTest {
         assertEquals("ITEM", item.type());
         assertEquals("", item.nexoId());
         assertEquals("", item.base64());
+        assertTrue(item.canPlace());
+        assertFalse(item.soulbound());
         assertTrue(item.lore().isEmpty());
         assertTrue(item.attributes().isEmpty());
         assertTrue(item.bonuses().isEmpty());
@@ -107,6 +109,73 @@ class ItemCatalogTest {
         assertThrows(UnsupportedOperationException.class, () -> catalog.definitions().clear());
         assertThrows(UnsupportedOperationException.class, () -> item.bonuses().put("planetry-oxygen", 1.0));
         assertThrows(UnsupportedOperationException.class, () -> item.lore().add("changed"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false"})
+    void acceptsBooleanPolicyFlagsAtRootOrUnderBonuses(String value) throws Exception {
+        for (boolean nested : List.of(false, true)) {
+            String flags = "planetry-canplace: " + value + "\nplanetry-soulbound: " + value + "\n";
+            String settings = nested ? "bonuses:\n" + flags.indent(2) : flags;
+            var item = load("items:\n  rock:\n" + settings.indent(4)).get("rock");
+            assertEquals(Boolean.parseBoolean(value), item.canPlace());
+            assertEquals(Boolean.parseBoolean(value), item.soulbound());
+            assertTrue(item.bonuses().isEmpty(), "Boolean flags must not become numeric lore bonuses");
+        }
+    }
+
+    @Test void allowsDifferentPolicyFlagsAtDifferentLocationsAlongsideNumericBonuses() throws Exception {
+        var item = load("""
+                items:
+                  rock:
+                    planetry-canplace: false
+                    bonuses:
+                      planetry-soulbound: true
+                      planetry-oxygen: 8
+                      minecraft-armor: 2
+                """).get("rock");
+        assertFalse(item.canPlace());
+        assertTrue(item.soulbound());
+        assertEquals(Map.of("planetry-oxygen", 8.0), item.bonuses());
+        assertEquals(2.0, item.attributes().get("minecraft:armor").amount());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"''", "'true'", "'false'", "'yes'", "0", "1", "1.0", "null", "~", "[]", "{}"})
+    void rejectsNonBooleanPolicyFlagsInBothLocations(String value) {
+        for (String key : List.of("planetry-canplace", "planetry-soulbound")) {
+            for (boolean nested : List.of(false, true)) {
+                String flag = key + ": " + value + "\n";
+                String settings = nested ? "bonuses:\n" + flag.indent(2) : flag;
+                var failure = assertThrows(IllegalArgumentException.class,
+                        () -> load("items:\n  rock:\n" + settings.indent(4)));
+                assertTrue(failure.getMessage().contains("items.rock." + (nested ? "bonuses." : "") + key));
+                assertTrue(failure.getMessage().contains("expected true or false"));
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false", "null", "''"})
+    void rejectsPolicyFlagsRepeatedAcrossRootAndBonusesEvenWhenEqualOrBlank(String value) {
+        for (String key : List.of("planetry-canplace", "planetry-soulbound")) {
+            for (String other : List.of("true", "false", value)) {
+                var failure = assertThrows(IllegalArgumentException.class, () -> load("items:\n  rock:\n    "
+                        + key + ": " + value + "\n    bonuses:\n      " + key + ": " + other + "\n"));
+                assertTrue(failure.getMessage().contains(key));
+                assertTrue(failure.getMessage().contains("also configured in bonuses"));
+            }
+        }
+    }
+
+    @Test void rejectsRepeatedPolicyFlagsWithinTheSameYamlMapping() {
+        for (String key : List.of("planetry-canplace", "planetry-soulbound")) {
+            for (boolean nested : List.of(false, true)) {
+                String flags = key + ": true\n" + key + ": false\n";
+                String settings = nested ? "bonuses:\n" + flags.indent(2) : flags;
+                assertThrows(IllegalArgumentException.class, () -> load("items:\n  rock:\n" + settings.indent(4)));
+            }
+        }
     }
 
     @Test void allExampleItemsLoad() throws Exception {
@@ -223,6 +292,8 @@ class ItemCatalogTest {
                 mutable, Map.of(), Map.of());
         mutable.clear();
         assertEquals(5.0, item.bonuses().get("planetry-oxygen"));
+        assertTrue(item.canPlace(), "The original constructor keeps placement enabled");
+        assertFalse(item.soulbound(), "The original constructor does not bind existing addon definitions");
     }
 
     private ItemCatalog load(String content) throws Exception {

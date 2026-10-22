@@ -64,10 +64,18 @@ There is no requirements bypass permission.
 | `/planetryitems list` | List configured IDs |
 | `/planetryitems give <online-player> <id> [amount]` | Give 1–2304 items; a full inventory receives no partial grant |
 | `/planetryitems info` | Show all held-item settings, effective model/material, attributes, bonuses and requirements |
+| `/planetryitems soulboundbypass` | Staff player only; toggle the confirmed soulbound drop override, off by default |
 | `/migrate` | Public, player-only inventory update; no permission; two-hour cooldown |
 | `/planetryitems reload` | Validate and reload all item and language files together |
 
-`/pitems` is an alias. Back up the item definitions before changing IDs or durability.
+`/pitems` is an alias. The soulbound drop override uses the same
+`planetry.admin.items` permission and resets on session changes, reload and
+death. While enabled, the first explicit drop warns; a second drop of the
+identical item and amount within two seconds permits that drop once. It
+does not allow external storage, placement or death drops, or bypass item
+requirements. See [the warning and command details](docs/OPERATIONS.md#commands-and-permissions).
+
+Back up the item definitions before changing IDs or durability.
 Migration rebuilds definition-owned material, texture, model, name, lore, equipment,
 attributes and bonuses while preserving quantity, enchantments and unrelated persistent
 data, container/bundle contents, book text and stored enchantments. Existing items keep their remaining durability, capped to a new maximum;
@@ -190,6 +198,20 @@ The legacy-style bonus alias `minecraft-armor: 3` under `bonuses` means
 `minecraft:armor: 3` under `attributes`; other `minecraft-*` attribute names work
 the same way. Do not configure the same normalized attribute twice.
 
+`planetry-canplace` (default `true`) and `planetry-soulbound` (default `false`)
+are boolean policy flags. Use unquoted `true` or `false` at the item root or
+under `bonuses`, once per flag; duplicates across both locations reject reload.
+They are not numeric Minecraft attributes and add no automatic lore.
+`planetry-canplace: false` silently blocks world placement from either hand,
+including blocks, entities, hanging items and buckets, without consuming the
+item or durability. Soulbound items also cannot be placed, dropped or written
+to external inventories; own storage, equipment, cursor and ender chest remain
+available, as does safe retrieval from external inventories. Nested bundles
+and container carriers receive the same protection. Death retains only the
+soulbound items and protected carriers; ordinary items follow normal death
+rules. Ordinary food/tool use remains valid, but soulbound tridents cannot be
+thrown. See [the full policy reference](docs/CONFIGURATION.md#placement-and-soulbound-policies).
+
 AuraSkills bonuses: `auraskills-additional-wisdom`, `-health`, `-regeneration`,
 `-toughness`, `-strength`. Only listed values apply, while held (nonwearables) or
 worn in the configured slot and usable by that player. They add once per active
@@ -208,7 +230,9 @@ Requirements accept `planetry-gamelevel` and `auraskills-required-farming`,
 requirement; 0 imposes none. Core game level comes from its progress cache,
 not vanilla XP. Missing, disabled, incompatible or unloaded level sources deny
 positive requirements. Denied use says `You cannot use this item: <requirements>!`; decorative prefixes
-remain in lore only. Requirement labels and lore have separate language templates. Players may hold restricted items in either hand and move them through storage.
+remain in lore only. Requirement labels and lore have separate language templates.
+Players may hold restricted items in either hand and move them through storage
+within their soulbound policy, if configured.
 Their native attributes and AuraSkills bonuses remain inactive while unusable. If
 a cursor still carries old native bonuses after requirements change, its first drag
 is safely cancelled while the cursor is refreshed; the next drag can hold it normally.
@@ -216,7 +240,9 @@ Requirements
 block activation, attacks, mining, consumption, projectiles and armour equipment routes
 including shift-click, number keys, drag, hand swap and dispensers. Restored
 inventories are reconciled when ready; unusable worn items move to storage, or
-drop beside the player if storage is full. A periodic refresh updates level changes
+drop beside the player if storage is full. Soulbound equipment instead stays
+worn without native attributes or AuraSkills bonuses until storage space opens.
+A periodic refresh updates level changes
 and holder-specific requirement lore (`refresh-interval-ticks`, default 20).
 Meet a requirement and its lore line disappears for the holder.
 
